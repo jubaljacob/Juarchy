@@ -18,8 +18,9 @@ Item {
     readonly property real spacing: Tokens.spacing.medium
     readonly property real maxMagnitude: (implicitWidth - cover.implicitWidth) / 2 - spacing
 
-    ServiceRef {
-        service: Audio.cava
+    Loader {
+        active: Privacy.loaded && Privacy.musicVisualisers
+        sourceComponent: ServiceRef { service: Audio.cava }
     }
 
     Shape {
@@ -32,7 +33,7 @@ Item {
     Variants {
         id: bars
 
-        model: Array.from({
+        model: !Privacy.musicVisualisers ? [] : Array.from({
             length: GlobalConfig.services.visualiserBars
         }, (_, i) => i)
 

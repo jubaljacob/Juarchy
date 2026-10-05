@@ -112,6 +112,24 @@ PageBase {
             text: Tr.tr("Weather")
         }
 
+        TextFieldRow {
+            first: true
+            last: true
+            label: Tr.tr("Forecast location")
+            subtext: Tr.tr("Choose a city or coordinates. Leave empty to disable weather. No automatic location lookup.")
+            value: GlobalConfig.services.weatherLocation
+            placeholderText: Tr.tr("City or latitude,longitude")
+            onEditingFinished: value => GlobalConfig.services.weatherLocation = value.trim()
+        }
+
+        StyledText {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            text: Tr.tr("Forecasts and city searches contact Open-Meteo. Opening a map contacts OpenStreetMap and, when radar is enabled, RainViewer.")
+            color: Colours.palette.m3outline
+            font: Tokens.font.label.small
+        }
+
         WeatherMap {
             Layout.fillWidth: true
         }

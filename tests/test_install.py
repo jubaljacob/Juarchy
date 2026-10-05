@@ -83,6 +83,14 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('target: "juarchy"', (new / 'shell.qml').read_text())
         self.assertFalse(any(p.is_symlink() for p in new.rglob('*')))
 
+    def test_reinstall_preserves_explicit_privacy_preferences(self):
+        installer.apply(installer.plan(home=self.home), self.home)
+        prefs = self.home / '.config/juarchy/privacy.json'
+        chosen = {'remoteMediaArtwork': True, 'musicVisualisers': True, 'notificationRetentionDays': 7}
+        prefs.write_text(json.dumps(chosen))
+        installer.apply(installer.plan(home=self.home), self.home)
+        self.assertEqual(json.loads(prefs.read_text()), chosen)
+
     def test_destination_parent_symlinks_fail_before_any_write(self):
         external = Path(self.temp.name) / 'external'
         external.mkdir()

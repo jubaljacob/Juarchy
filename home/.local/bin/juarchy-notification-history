@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Erase saved notification content and images without archiving private data."""
+import os
+import argparse
+import json
+from pathlib import Path
+import shutil
+
+
+def clear_history(home=None, environ=None):
+    home = Path.home() if home is None else Path(home)
+    environ = os.environ if environ is None else environ
+    state = Path(environ.get('XDG_STATE_HOME', home / '.local/state')) / 'caelestia'
+    cache = Path(environ.get('XDG_CACHE_HOME', home / '.cache')) / 'caelestia/imagecache/notifs'
+    history = state / 'notifs.json'
+    history.unlink(missing_ok=True)
+    if cache.is_symlink():
+        cache.unlink()
+    elif cache.exists():
+        shutil.rmtree(cache)
+
+
+def prune_images(home=None, environ=None):
+    home = Path.home() if home is None else Path(home)
+    environ = os.environ if environ is None else environ
+    history = Path(environ.get('XDG_STATE_HOME', home / '.local/state')) / 'caelestia/notifs.json'
+    cache = Path(environ.get('XDG_CACHE_HOME', home / '.cache')) / 'caelestia/imagecache/notifs'
+    if not cache.is_dir() or cache.is_symlink():
+        return
+    try:
+        entries = json.loads(history.read_text())
+        if not isinstance(entries, list):
+            return
+        keep = {item.get('image') for item in entries if isinstance(item, dict)}
+    except (OSError, ValueError):
+        return
+    for image in cache.iterdir():
+        if (image.is_file() or image.is_symlink()) and str(image) not in keep:
+            image.unlink()
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--prune-images', action='store_true')
+    args = parser.parse_args()
+    if args.prune_images:
+        prune_images()
+    else:
+        clear_history()

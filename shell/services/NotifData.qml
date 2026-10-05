@@ -46,6 +46,7 @@ QtObject {
     property string appIcon
     property string appName
     property string image
+    onImageChanged: { if (Notifs.loaded) Notifs.saveHistory(); }
     property var hints // Hints are not persisted across restarts
     property real expireTimeout: GlobalConfig.notifs.defaultExpireTimeout
     property int urgency: NotificationUrgency.Normal
@@ -203,6 +204,7 @@ QtObject {
     }
 
     function maybeTriggerDummyImageLoader(): void {
+        if (!Privacy.loaded || Privacy.notificationRetentionDays === 0) return;
         if (image && !image.startsWith("image://icon/") && !image.startsWith(Paths.notifimagecache))
             dummyImageLoader.active = true;
     }

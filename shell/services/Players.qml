@@ -29,11 +29,16 @@ Singleton {
     function getArtUrl(player: MprisPlayer): string {
         if (!player)
             return "";
-        if (player.trackArtUrl)
-            return player.trackArtUrl;
+        if (player.trackArtUrl) {
+            const url = player.trackArtUrl.toString();
+            // Explicitly allow only local file URLs without a remote hostname.
+            if (/^file:\/\/\//i.test(url) || /^file:\/\/localhost\//i.test(url) || url.startsWith("/"))
+                return url;
+            return Privacy.loaded && Privacy.remoteMediaArtwork && /^https?:\/\//i.test(url) ? url : "";
+        }
 
         const url = player.metadata["xesam:url"] ?? "";
-        if (url.startsWith("https://www.youtube.com/watch")) {
+        if (Privacy.loaded && Privacy.remoteMediaArtwork && url.startsWith("https://www.youtube.com/watch")) {
             // Fallback for youtube
             const id = url.match(/[?&]v=([\w-]{11})/)?.[1];
             return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : "";

@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import Caelestia.Config
 import Caelestia.I18n
 import qs.components.controls
+import qs.services
 import qs.modules.nexus.common
 
 PageBase {
@@ -40,6 +41,13 @@ PageBase {
     title: Tr.tr("Notifications")
     isSubPage: true
 
+    readonly property list<MenuItem> retentionItems: [
+        MenuItem { text: Tr.tr("Current session"); value: 0 },
+        MenuItem { text: Tr.tr("1 day"); value: 1 },
+        MenuItem { text: Tr.tr("7 days"); value: 7 },
+        MenuItem { text: Tr.tr("30 days"); value: 30 }
+    ]
+
     ColumnLayout {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: parent.top
@@ -47,6 +55,28 @@ PageBase {
         spacing: Tokens.spacing.extraSmall / 2
 
         // Notifications
+        SectionHeader {
+            first: true
+            text: Tr.tr("Notification privacy")
+        }
+
+        SelectRow {
+            first: true
+            label: Tr.tr("Keep notification history")
+            subtext: Tr.tr("Session history stays in memory and clears at logout or shell restart. Longer retention saves messages locally.")
+            menuItems: root.retentionItems
+            active: root.retentionItems.find(i => i.value === Privacy.notificationRetentionDays)
+            onSelected: item => Privacy.notificationRetentionDays = item.value
+        }
+
+        RowButton {
+            last: true
+            icon: "delete"
+            text: Tr.tr("Erase notification history")
+            subtext: Tr.tr("Clear notifications and their saved images. Messages are hidden on the lock screen.")
+            onClicked: Notifs.clearHistory()
+        }
+
         SectionHeader {
             first: true
             text: Tr.tr("Notifications")

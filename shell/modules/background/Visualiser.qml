@@ -15,7 +15,7 @@ Item {
     required property ShellScreen screen
     required property Item wallpaper
 
-    readonly property bool shouldBeActive: Config.background.visualiser.enabled && (!Config.background.visualiser.autoHide || (Hypr.monitorFor(screen)?.activeWorkspace?.toplevels?.values.every(t => t.lastIpcObject?.floating) ?? true))
+    readonly property bool shouldBeActive: Privacy.loaded && Privacy.musicVisualisers && Config.background.visualiser.enabled && (!Config.background.visualiser.autoHide || (Hypr.monitorFor(screen)?.activeWorkspace?.toplevels?.values.every(t => t.lastIpcObject?.floating) ?? true))
     property real offset: shouldBeActive ? 0 : screen.height * 0.2
 
     opacity: shouldBeActive ? 1 : 0
@@ -23,7 +23,7 @@ Item {
     Loader {
         asynchronous: true
         anchors.fill: parent
-        active: root.opacity > 0 && Config.background.visualiser.blur
+        active: Privacy.musicVisualisers && root.opacity > 0 && Config.background.visualiser.blur
 
         sourceComponent: MultiEffect {
             source: root.wallpaper
@@ -48,7 +48,7 @@ Item {
             anchors.topMargin: root.offset
             anchors.bottomMargin: -root.offset
 
-            active: root.opacity > 0
+            active: Privacy.musicVisualisers && root.opacity > 0
 
             sourceComponent: Item {
                 ServiceRef {

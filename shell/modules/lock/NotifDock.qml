@@ -43,7 +43,7 @@ ColumnLayout {
             asynchronous: true
             anchors.centerIn: parent
             active: opacity > 0
-            opacity: Notifs.list.length > 0 && !Config.lock.hideNotifs ? 0 : 1
+            opacity: 1
 
             sourceComponent: ColumnLayout {
                 spacing: Tokens.spacing.largeIncreased
@@ -63,7 +63,7 @@ ColumnLayout {
 
                 StyledText {
                     Layout.alignment: Qt.AlignHCenter
-                    text: Config.lock.hideNotifs ? Tr.tr("Unlock for notifications") : Tr.tr("No notifications")
+                    text: Tr.tr("Unlock for notifications")
                     color: Colours.palette.m3outlineVariant
                     font: Tokens.font.mono.builders.large.weight(Font.Medium).build()
                 }
@@ -78,7 +78,7 @@ ColumnLayout {
 
         StyledListView {
             anchors.fill: parent
-            visible: !Config.lock.hideNotifs
+            visible: false
             spacing: Tokens.spacing.small
             clip: true
 

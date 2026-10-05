@@ -34,6 +34,14 @@ ColumnLayout {
     function followLocation(): void {
         if (browsing) return;
         const configured = GlobalConfig.services.weatherLocation;
+        if (!configured.trim()) {
+            hasLocation = false;
+            imageSource = "";
+            conditions = null;
+            radarTime = 0;
+            status = "Choose a city to enable weather. No automatic location lookup is used.";
+            return;
+        }
         const coords = (configured && /^-?\d+(\.\d+)?,\s*-?\d+(\.\d+)?$/.test(configured) ? configured : Weather.loc || "").split(",").map(Number);
         if (coords.length !== 2 || !Number.isFinite(coords[0]) || !Number.isFinite(coords[1])) return;
         if (latitude !== coords[0] || longitude !== coords[1]) {

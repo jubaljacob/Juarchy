@@ -53,6 +53,8 @@ def plan(profile=None, home=None):
             if source.is_file():
                 entries[str(source.relative_to(tree))] = source
     entries['.config/quickshell/juarchy'] = ROOT / 'shell'
+    if home is not None and not exists(home / '.config/juarchy/privacy.json'):
+        entries['.config/juarchy/privacy.json'] = ROOT / 'examples/privacy.json'
     # Keep each computer's overrides across subsequent installs.
     if home is not None and not exists(home / '.config/hypr/machine.lua'):
         entries['.config/hypr/machine.lua'] = ROOT / 'examples/machine.lua'

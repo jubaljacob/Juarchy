@@ -83,6 +83,26 @@ PageBase {
 
         // Polling
         SectionHeader {
+            text: Tr.tr("Media privacy")
+        }
+
+        ToggleRow {
+            first: true
+            text: Tr.tr("Remote music artwork")
+            subtext: Tr.tr("Allow artwork downloads from media providers. Local artwork is always available.")
+            checked: Privacy.remoteMediaArtwork
+            onToggled: Privacy.remoteMediaArtwork = checked
+        }
+
+        ToggleRow {
+            last: true
+            text: Tr.tr("Music visualisers")
+            subtext: Tr.tr("Enable animated audio visualisers and beat animations")
+            checked: Privacy.musicVisualisers
+            onToggled: Privacy.musicVisualisers = checked
+        }
+
+        SectionHeader {
             text: Tr.tr("Polling")
         }
 
