@@ -1,8 +1,11 @@
-# Jubal Desktop
+# Juarchy
 
 A personal Hyprland desktop based on Caelestia, starting from the customized
 build captured on **5 October 2026**. The first baseline is tagged
 `baseline-2026-10-05`; subsequent changes build on that version.
+
+GitHub repository: [jubaljacob/Juarchy](https://github.com/jubaljacob/Juarchy).
+The local checkout is currently `~/Projects/jubal-desktop`.
 
 The baseline includes the current bar and audio controls, grouped launcher,
 combined Arch/AUR package browser with recommendations, settings pages,
@@ -22,8 +25,14 @@ This is a desktop configuration, not an operating-system image.
 
 ## Install on another computer
 
-Clone your private repository with your authenticated GitHub account. From
-the checkout, inspect the required packages:
+Clone your private repository with your authenticated GitHub account:
+
+```sh
+gh repo clone jubaljacob/Juarchy
+cd Juarchy
+```
+
+From the checkout, inspect the required packages:
 
 ```sh
 python scripts/dependencies.py
@@ -109,11 +118,13 @@ gh auth login
 python scripts/publish.py
 ```
 
-The publishing script creates **your-account/jubal-desktop** as a private
-repository, configures a GitHub noreply author address for future commits,
-and pushes `main` and the baseline tag. It refuses to take over an existing
-repository or change an existing origin remote. The first local baseline
-commit uses a local-only author identity.
+The publishing script uses the existing **jubaljacob/Juarchy** repository,
+checks its private visibility and your push access, configures a GitHub
+noreply author address for future commits, and pushes `main` and the baseline
+tag. It merges any GitHub initialization commits before pushing; if those
+files conflict, resolve and commit the merge, then rerun the script. It does
+not force-push or change an origin that points elsewhere. The first local
+baseline commit uses a local-only author identity.
 
 ## Credits and license
 
