@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""Native settings map: cached OSM tiles, RainViewer radar and Open-Meteo conditions."""
+import argparse
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
+from io import BytesIO
+import json
+import math
+import os
+from pathlib import Path
+import re
+import signal
+import tempfile
+import time
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+from PIL import Image
+
+CACHE = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'jubal-settings/weather'
+USER_AGENT = 'JubalSettingsWeather/1.0 (personal Caelestia desktop map)'
+WIDTH, HEIGHT = 768, 384
+
+
+def fetch(url, ttl):
+    key = hashlib.sha256(url.encode()).hexdigest()
+    kind = 'osm' if url.startswith('https://tile.openstreetmap.org/') else 'http'
+    path = CACHE / kind / key
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and time.time() - path.stat().st_mtime < ttl:
+        return path.read_bytes()
+    with urlopen(Request(url, headers={'User-Agent': USER_AGENT}), timeout=12) as response:
+        data = response.read(8 * 1024 * 1024 + 1)
+    if len(data) > 8 * 1024 * 1024:
+        raise ValueError('Map service response is too large.')
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+        stream.write(data)
+        temporary = Path(stream.name)
+    temporary.replace(path)
+    return data
+
+
+def fetch_json(url, ttl):
+    return json.loads(fetch(url, ttl))
+
+
+def validate_coords(lat, lon):
+    if not math.isfinite(lat) or not math.isfinite(lon) or not -85.05112878 <= lat <= 85.05112878 or not -180 <= lon <= 180:
+        raise ValueError('Choose coordinates between 85° south and 85° north, and 180° west and east.')
+
+
+def project(lat, lon, zoom):
+    validate_coords(lat, lon)
+    size = 256 * 2 ** zoom
+    return (lon + 180) / 360 * size, (1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * size
+
+
+def search(query):
+    query = query.strip()
+    if len(query) < 2:
+        raise ValueError('Enter at least two characters to search for a place.')
+    url = 'https://geocoding-api.open-meteo.com/v1/search?' + urlencode({'name': query[:160], 'count': 6, 'language': 'en', 'format': 'json'})
+    data = fetch_json(url, 86400)
+    if data.get('error'):
+        raise RuntimeError(data.get('reason', 'Location search failed.'))
+    results = [{'name': ', '.join(str(r[k]) for k in ('name', 'admin1', 'country') if r.get(k)),
+                'latitude': r['latitude'], 'longitude': r['longitude']} for r in data.get('results', [])]
+    return {'success': True, 'results': results}
+
+
+def current(lat, lon):
+    url = 'https://api.open-meteo.com/v1/forecast?' + urlencode({
+        'latitude': lat, 'longitude': lon, 'current': 'temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m',
+        'timezone': 'UTC', 'timeformat': 'unixtime', 'forecast_days': 1})
+    data = fetch_json(url, 600)
+    if not data.get('current'):
+        raise RuntimeError(data.get('reason', 'Current weather is unavailable.'))
+    return data['current']
+
+
+def radar_frame():
+    data = fetch_json('https://api.rainviewer.com/public/weather-maps.json', 300)
+    frames = data.get('radar', {}).get('past', [])
+    if not frames:
+        raise RuntimeError('Rain radar is unavailable.')
+    frame = max(frames, key=lambda f: f['time'])
+    host = data['host'].rstrip('/')
+    if not re.fullmatch(r'https://[a-z0-9.-]+\.rainviewer\.com', host) or not re.fullmatch(r'/v2/radar/\d+', frame['path']):
+        raise RuntimeError('Unexpected radar service address.')
+    return {'base': host + frame['path'], 'time': frame['time']}
+
+
+def tile(url, ttl):
+    with Image.open(BytesIO(fetch(url, ttl))) as image:
+        if image.size != (256, 256):
+            raise ValueError('Unexpected map tile size.')
+        return image.convert('RGBA')
+
+
+def prune_cache():
+    stamp = CACHE / 'last-cleanup'
+    now = time.time()
+    if stamp.exists() and now - stamp.stat().st_mtime < 86400:
+        return
+    # Radar frame URLs change continuously. Bound their retention while keeping
+    # base map tiles well beyond OSM's minimum seven-day cache duration.
+    for kind, max_age in (('osm', 30 * 86400), ('http', 2 * 86400), ('rendered', 86400)):
+        folder = CACHE / kind
+        if folder.exists():
+            for path in folder.iterdir():
+                if path.is_file() and now - path.stat().st_mtime > max_age:
+                    path.unlink(missing_ok=True)
+    stamp.touch()
+
+
+def view(lat, lon, zoom, radar=True):
+    validate_coords(lat, lon)
+    if not 3 <= zoom <= 7:
+        raise ValueError('Map zoom must be between 3 and 7.')
+    warnings = []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        weather_future = pool.submit(current, lat, lon)
+        radar_future = pool.submit(radar_frame) if radar else None
+        try:
+            weather = weather_future.result()
+        except Exception:
+            weather = None
+            warnings.append('Current weather unavailable. Check your connection and refresh.')
+        try:
+            frame = radar_future.result() if radar_future else None
+        except Exception:
+            frame = None
+            warnings.append('Rain radar unavailable. Showing the base map.')
+    cx, cy = project(lat, lon, zoom)
+    left, top = round(cx - WIDTH / 2), round(cy - HEIGHT / 2)
+    canvas = Image.new('RGBA', (WIDTH, HEIGHT), '#dbe4e7')
+    positions = [(x, y) for y in range(top // 256, (top + HEIGHT - 1) // 256 + 1)
+                 for x in range(left // 256, (left + WIDTH - 1) // 256 + 1) if 0 <= y < 2 ** zoom]
+
+    def load(position):
+        x, y = position
+        nx = x % (2 ** zoom)
+        base = overlay = None
+        try:
+            base = tile(f'https://tile.openstreetmap.org/{zoom}/{nx}/{y}.png', 7 * 86400)
+        except Exception:
+            pass
+        if frame:
+            try:
+                overlay = tile(f"{frame['base']}/256/{zoom}/{nx}/{y}/2/1_1.png", 86400)
+            except Exception:
+                pass
+        return x, y, base, overlay
+
+    missing_base = missing_radar = 0
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for x, y, base, overlay in pool.map(load, positions):
+            pos = (x * 256 - left, y * 256 - top)
+            if base is not None:
+                canvas.paste(base, pos)
+            else:
+                missing_base += 1
+            if overlay is not None:
+                canvas.paste(overlay, pos, overlay)
+            elif frame:
+                missing_radar += 1
+    if missing_base:
+        warnings.append('Some map tiles could not load. Refresh to retry.')
+    if missing_radar:
+        warnings.append('Some radar tiles are unavailable; radar coverage is incomplete.')
+    if frame and time.time() - frame['time'] > 1800:
+        warnings.append('The latest radar frame is over 30 minutes old.')
+    if weather and time.time() - weather['time'] > 3600:
+        warnings.append('Current conditions are over one hour old.')
+    output_dir = CACHE / 'rendered'
+    output_dir.mkdir(parents=True, exist_ok=True)
+    prune_cache()
+    with tempfile.NamedTemporaryFile(prefix='map-', suffix='.png', dir=output_dir, delete=False) as stream:
+        canvas.save(stream, format='PNG')
+        image_path = Path(stream.name).as_uri()
+    return {'success': True, 'image': image_path, 'latitude': lat, 'longitude': lon, 'zoom': zoom,
+            'weather': weather, 'radarTime': frame['time'] if frame else 0, 'warnings': warnings}
+
+
+def timeout(signum, frame):
+    raise TimeoutError('Weather request timed out. Check your connection and retry.')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest='action', required=True)
+    find = sub.add_parser('search')
+    find.add_argument('query')
+    show = sub.add_parser('view')
+    show.add_argument('--latitude', type=float, required=True)
+    show.add_argument('--longitude', type=float, required=True)
+    show.add_argument('--zoom', type=int, default=6)
+    show.add_argument('--no-radar', action='store_true')
+    args = parser.parse_args()
+    signal.signal(signal.SIGALRM, timeout)
+    signal.alarm(90)
+    return search(args.query) if args.action == 'search' else view(args.latitude, args.longitude, args.zoom, not args.no_radar)
+
+
+if __name__ == '__main__':
+    try:
+        print(json.dumps(main()))
+    except Exception as error:
+        print(json.dumps({'success': False, 'message': str(error)}))
+        raise SystemExit(1)

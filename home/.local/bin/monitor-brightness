@@ -1,0 +1,68 @@
+#!/usr/bin/python3
+"""Adjust the display under the pointer, without changing keyboard focus."""
+
+import argparse
+import json
+import shlex
+import subprocess
+import sys
+
+
+def run(*args):
+    return subprocess.run(args, check=True, text=True, capture_output=True, timeout=10).stdout
+
+
+def monitor_at(monitors, cursor):
+    for monitor in monitors:
+        if monitor.get("disabled"):
+            continue
+        width, height = monitor["width"], monitor["height"]
+        if monitor.get("transform", 0) % 2:
+            width, height = height, width
+        scale = monitor.get("scale", 1)
+        if (monitor["x"] <= cursor["x"] < monitor["x"] + width / scale
+                and monitor["y"] <= cursor["y"] < monitor["y"] + height / scale):
+            return monitor
+    raise RuntimeError("No active monitor found under the cursor")
+
+
+def brightness_command(monitor, direction):
+    # Use the shell's persistent state and asynchronous hardware writer so
+    # keys, sliders and the OSD agree. Every key press contributes to the target.
+    return ["/usr/bin/qs", "-c", "caelestia", "ipc", "call", "brightness",
+            "setFor", monitor["name"], "+5%" if direction == "up" else "5%-"]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("direction", choices=("up", "down"))
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+    monitors = json.loads(run("/usr/bin/hyprctl", "-j", "monitors"))
+    cursor = json.loads(run("/usr/bin/hyprctl", "-j", "cursorpos"))
+    monitor = monitor_at(monitors, cursor)
+    command = brightness_command(monitor, args.direction)
+    if args.dry_run:
+        print(monitor["name"] + ": " + shlex.join(command))
+        return
+
+    try:
+        response = run(*command).strip()
+    except subprocess.CalledProcessError:
+        # The packaged shell can still be running until the local override is
+        # activated. Keep the keys usable during that transition.
+        response = run(command[0], "-p", "/etc/xdg/quickshell/caelestia",
+                       *command[3:]).strip()
+    if not response.startswith("Set monitor "):
+        raise RuntimeError(response or "Caelestia did not accept the brightness change")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        detail = getattr(error, "stderr", None) or str(error)
+        print(detail, file=sys.stderr)
+        subprocess.run(["/usr/bin/notify-send", "Brightness adjustment failed", detail],
+                       check=False)
+        sys.exit(1)

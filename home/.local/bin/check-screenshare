@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Inspect the desktop capture path and open a local browser sharing test."""
+import json
+import os
+from pathlib import Path
+import subprocess
+
+
+output = []
+
+
+def record(title, command, timeout=10, prefixes=None):
+    output.append('\n' + title)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+        value = result.stdout.strip()
+        if prefixes:
+            value = '\n'.join(line for line in value.splitlines() if line.startswith(prefixes))
+        output.append(value)
+        if result.returncode:
+            output.append(result.stderr.strip())
+        return result
+    except (OSError, subprocess.TimeoutExpired) as error:
+        output.append(str(error))
+        return None
+
+
+output.append('Screen sharing diagnostic')
+for name in ('XDG_SESSION_TYPE', 'XDG_CURRENT_DESKTOP', 'WAYLAND_DISPLAY'):
+    output.append(name + '=' + os.environ.get(name, '(unset)'))
+clients = record('Hyprland client inspection', ['hyprctl', '-j', 'clients'])
+if clients and clients.returncode == 0:
+    # Replace raw output to keep window titles and unrelated applications private.
+    output.pop()
+    try:
+        for client in json.loads(clients.stdout):
+            if any(name in client.get('class', '').lower() for name in ('chromium', 'chrome', 'discord')):
+                output.append('App: ' + client.get('class', '') + '; XWayland: ' + str(client.get('xwayland')))
+    except (ValueError, TypeError, AttributeError) as error:
+        output.append('Could not parse client list: ' + str(error))
+record('ScreenCast source types (bitmask: 1=screen, 2=window, 4=virtual)', [
+    'gdbus', 'call', '--session', '--dest', 'org.freedesktop.portal.Desktop',
+    '--object-path', '/org/freedesktop/portal/desktop', '--method', 'org.freedesktop.DBus.Properties.Get',
+    'org.freedesktop.portal.ScreenCast', 'AvailableSourceTypes'])
+record('Camera portal presence', [
+    'gdbus', 'call', '--session', '--dest', 'org.freedesktop.portal.Desktop',
+    '--object-path', '/org/freedesktop/portal/desktop', '--method', 'org.freedesktop.DBus.Properties.Get',
+    'org.freedesktop.portal.Camera', 'IsCameraPresent'])
+record('Portal activation environment', ['systemctl', '--user', 'show-environment'],
+       prefixes=('XDG_SESSION_TYPE=', 'XDG_CURRENT_DESKTOP=', 'WAYLAND_DISPLAY=', 'HYPRLAND_INSTANCE_SIGNATURE='))
+record('Portal service status', ['systemctl', '--user', 'is-active', 'xdg-desktop-portal', 'xdg-desktop-portal-hyprland', 'pipewire'])
+report = Path('/tmp/jubal-screenshare-check.txt')
+report.write_text('\n'.join(output) + '\n')
+report.chmod(0o600)
+print('\n'.join(output))
+print('\nSaved diagnostic to ' + str(report))
+page = Path.home() / '.local/share/jubal/screen-share-check.html'
+sample = page.with_name('screen-share-sample.html')
+profile = Path('/tmp') / ('jubal-screenshare-browser-' + str(os.getuid()))
+subprocess.Popen(['chromium', '--ozone-platform=wayland', '--disable-gpu', '--disable-accelerated-video-encode',
+                  '--user-data-dir=' + str(profile), '--no-first-run', '--no-default-browser-check', sample.as_uri(), page.as_uri()],
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print('Opened a separate test browser with GPU acceleration disabled, including an animated sample tab.')
+print('Try sharing the animated sample tab, then click Test camera.')

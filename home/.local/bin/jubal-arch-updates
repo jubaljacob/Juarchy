@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Check Arch repository updates in an isolated database, never install or sync the system DB."""
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+import time
+
+CACHE = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'jubal-settings/updates'
+
+
+def parse_updates(text):
+    packages = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        match = re.fullmatch(r'(\S+)\s+(\S+)\s+->\s+(\S+)', line.strip())
+        if not match:
+            raise ValueError('Unexpected response from checkupdates; could not verify update status.')
+        packages.append(dict(zip(('name', 'installed', 'available'), match.groups())))
+    return packages
+
+
+def check(force=False):
+    if not shutil.which('checkupdates'):
+        raise RuntimeError('Install pacman-contrib to enable Arch update checks.')
+    CACHE.mkdir(parents=True, exist_ok=True)
+    with (CACHE / 'check.lock').open('w') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError('An update check is already running. Try again shortly.')
+        cache = CACHE / 'result.json'
+        if not force and cache.exists():
+            try:
+                result = json.loads(cache.read_text())
+                if 0 <= time.time() - result['checkedAt'] < 300:
+                    return result
+            except (ValueError, KeyError, TypeError):
+                pass
+        # A private temporary DB avoids changing pacman's system sync databases.
+        with tempfile.TemporaryDirectory(prefix='check-', dir=CACHE) as database:
+            result = subprocess.run(['checkupdates', '--nocolor'], capture_output=True,
+                                    text=True, timeout=150,
+                                    env={**os.environ, 'LC_ALL': 'C', 'CHECKUPDATES_DB': database})
+        if result.returncode not in (0, 2):
+            raise RuntimeError(result.stderr.strip() or 'Could not reach the Arch mirrors. Check your connection and retry.')
+        packages = parse_updates(result.stdout)
+        if (result.returncode == 2 and packages) or (result.returncode == 0 and not packages):
+            raise RuntimeError('Inconsistent update check result. Please retry.')
+        output = {'success': True, 'checkedAt': int(time.time()), 'packages': packages}
+        temporary = cache.with_suffix('.tmp')
+        temporary.write_text(json.dumps(output))
+        temporary.replace(cache)
+        return output
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--refresh', action='store_true')
+    args = parser.parse_args()
+    try:
+        print(json.dumps(check(args.refresh)))
+    except Exception as error:
+        print(json.dumps({'success': False, 'message': str(error)}))
+        raise SystemExit(1)

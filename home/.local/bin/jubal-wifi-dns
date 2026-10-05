@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Read/set a saved Wi-Fi profile's DNS preset without changing IP addressing."""
+import argparse
+import ipaddress
+import json
+import os
+import subprocess
+import sys
+
+PRESETS = {
+    'cloudflare': {4: ['1.1.1.1', '1.0.0.1'], 6: ['2606:4700:4700::1111', '2606:4700:4700::1001']},
+    'google': {4: ['8.8.8.8', '8.8.4.4'], 6: ['2001:4860:4860::8888', '2001:4860:4860::8844']},
+    'automatic': {4: [], 6: []},
+}
+
+
+def wifi_ssid(connection):
+    wireless = connection.get_setting_wireless()
+    if wireless is None or wireless.get_ssid() is None:
+        return None
+    return bytes(wireless.get_ssid().get_data()).decode('utf-8', errors='replace')
+
+
+def resolve(client, ssid, identifier=None):
+    matches = [c for c in client.get_connections() if wifi_ssid(c) == ssid and
+               (identifier is None or c.get_uuid() == identifier)]
+    if len(matches) > 1:
+        active = {c.get_uuid() for c in client.get_active_connections()}
+        live = [c for c in matches if c.get_uuid() in active]
+        if len(live) == 1:
+            return live[0]
+    if len(matches) != 1:
+        raise ValueError('Cannot identify one saved Wi-Fi profile. Connect to this network first.' if matches else
+                         'No saved profile found for this Wi-Fi network.')
+    return matches[0]
+
+
+def families(connection):
+    result = {}
+    for family, setting in ((4, connection.get_setting_ip4_config()), (6, connection.get_setting_ip6_config())):
+        if setting is not None and setting.get_method() not in ('disabled', 'ignore', 'link-local', 'shared'):
+            result[family] = {'method': setting.get_method(), 'ignore': setting.get_ignore_auto_dns(),
+                              'dns': [setting.get_dns(i) for i in range(setting.get_num_dns())]}
+    if not result:
+        raise ValueError('This profile has no supported IPv4 or IPv6 DNS configuration.')
+    return result
+
+
+def addresses(values):
+    try:
+        return {str(ipaddress.ip_address(value)) for value in values}
+    except ValueError:
+        return set(values)
+
+
+def detect(config):
+    if all(not part['ignore'] and not part['dns'] for part in config.values()):
+        return 'automatic'
+    for name in ('cloudflare', 'google'):
+        if all(part['ignore'] and addresses(part['dns']) == addresses(PRESETS[name][family])
+               for family, part in config.items()):
+            return name
+    return 'custom'
+
+
+def modification(identifier, preset, config):
+    if preset not in PRESETS:
+        raise ValueError('Unknown DNS provider.')
+    if preset == 'automatic' and not any(part['method'] in ('auto', 'dhcp') for part in config.values()):
+        raise ValueError('This network uses static addressing. Choose a DNS provider or enter custom DNS below.')
+    args = ['connection', 'modify', 'uuid', identifier]
+    for family in config:
+        args.extend([f'ipv{family}.dns', ','.join(PRESETS[preset][family]),
+                     f'ipv{family}.ignore-auto-dns', 'no' if preset == 'automatic' else 'yes'])
+    return args
+
+
+def nmcli(args):
+    result = subprocess.run(['/usr/bin/nmcli', '--wait', '15', *args], text=True,
+                            capture_output=True, timeout=20,
+                            env={**os.environ, 'LC_ALL': 'C'})
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or 'NetworkManager could not apply the change.')
+    return result.stdout
+
+
+def state(connection):
+    config = families(connection)
+    return {'uuid': connection.get_uuid(), 'provider': detect(config),
+            'ipv4': config.get(4, {}).get('dns', []), 'ipv6': config.get(6, {}).get('dns', [])}
+
+
+def apply(client, connection, preset):
+    identifier = connection.get_uuid()
+    config = families(connection)
+    nmcli(modification(identifier, preset, config))
+    # Query again after saving: never reconnect or alter a different active profile.
+    active = []
+    try:
+        output = nmcli(['--terse', '--escape', 'no', '--fields', 'UUID,DEVICE', 'connection', 'show', '--active'])
+        for line in output.splitlines():
+            uuid, separator, device = line.partition(':')
+            if separator and uuid == identifier and device and device != '--':
+                active.extend(item.strip() for item in device.split(',') if item.strip())
+        for device in active:
+            live_uuid = nmcli(['--get-values', 'GENERAL.CON-UUID', 'device', 'show', device]).strip()
+            if live_uuid != identifier:
+                raise RuntimeError('The active connection changed.')
+            nmcli(['device', 'reapply', device])
+    except (RuntimeError, subprocess.TimeoutExpired) as error:
+        return {'success': True, 'saved': True, 'applied': False, 'uuid': identifier, 'provider': preset,
+                'message': 'DNS saved. Reconnect this Wi-Fi network to apply it.', 'detail': str(error)}
+    return {'success': True, 'saved': True, 'applied': bool(active), 'uuid': identifier, 'provider': preset,
+            'message': 'DNS updated for this Wi-Fi connection.' if active else 'DNS saved for the next connection.'}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=('status', 'set'))
+    parser.add_argument('--ssid', required=True)
+    parser.add_argument('--uuid')
+    parser.add_argument('--provider', choices=tuple(PRESETS))
+    args = parser.parse_args()
+    if args.action == 'set' and (not args.uuid or not args.provider):
+        parser.error('Setting DNS requires a profile UUID and provider.')
+    import gi
+    gi.require_version('NM', '1.0')
+    from gi.repository import NM
+    client = NM.Client.new(None)
+    connection = resolve(client, args.ssid, args.uuid)
+    print(json.dumps({'success': True, **state(connection)} if args.action == 'status' else apply(client, connection, args.provider)))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as error:
+        print(json.dumps({'success': False, 'message': str(error)}))
+        sys.exit(1)

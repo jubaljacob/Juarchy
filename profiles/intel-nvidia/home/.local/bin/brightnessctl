@@ -1,0 +1,16 @@
+#!/bin/sh
+# The internal panel is on Intel; the disconnected NVIDIA backlight is
+# otherwise selected first. Keep explicit device/class queries unchanged.
+for arg do
+    case "$arg" in
+        -d*|--device*|-c*|--class*|-l|--list|-h|--help|-V|--version)
+            exec /usr/bin/brightnessctl "$@"
+            ;;
+    esac
+done
+
+if [ -d /sys/class/backlight/intel_backlight ]; then
+    exec /usr/bin/brightnessctl --device=intel_backlight "$@"
+fi
+
+exec /usr/bin/brightnessctl "$@"

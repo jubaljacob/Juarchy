@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""Searchable, nested desktop menu using the existing Fuzzel theme."""
+
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+
+os.environ["PATH"] = str(Path.home() / ".local/bin") + os.pathsep + os.environ.get("PATH", os.defpath)
+
+CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "jubal-launcher/menu.json"
+
+
+def validate(menu):
+    if not isinstance(menu, dict) or not isinstance(menu.get("title"), str):
+        raise ValueError("Each menu needs a title")
+    if not isinstance(menu.get("items"), list) or not menu["items"]:
+        raise ValueError("Each menu needs a nonempty items list")
+    for entry in menu["items"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("label"), str):
+            raise ValueError("Each item needs a label")
+        if not entry["label"] or any(c in entry["label"] for c in "\n\r\0"):
+            raise ValueError("Labels must be nonempty single lines")
+        actions = set(entry) & {"items", "command", "path", "packages"}
+        if len(actions) != 1:
+            raise ValueError(f"{entry['label']}: expected exactly one action")
+        if "items" in entry:
+            validate(entry)
+        elif "command" in entry:
+            command = entry["command"]
+            if not isinstance(command, list) or not command or not all(isinstance(arg, str) and '\0' not in arg for arg in command) or not command[0]:
+                raise ValueError(f"{entry['label']}: command must be an argument list")
+        elif "path" in entry:
+            if not isinstance(entry["path"], str) or not entry["path"]:
+                raise ValueError(f"{entry['label']}: expected a folder path")
+        elif entry["packages"] not in ("search", "install"):
+            raise ValueError("Unknown package action")
+
+
+def notify(message):
+    print(f"Launcher: {message}", file=sys.stderr)
+    if shutil.which("notify-send"):
+        subprocess.run(["notify-send", "Launcher", message], check=False)
+
+
+def application_entries():
+    # GIO handles XDG locations, user overrides, visibility and translated names.
+    import gi
+    gi.require_version("Gio", "2.0")
+    gi.require_version("GioUnix", "2.0")
+    from gi.repository import Gio, GioUnix  # noqa: F401: registers desktop app types
+
+    entries = []
+    for app in Gio.AppInfo.get_all():
+        if not app.should_show() or app.get_id() == "jubal-launcher.desktop":
+            continue
+        name = " ".join(app.get_display_name().split())
+        entries.append({"label": name + "  · Applications", "application": app})
+    return sorted(entries, key=lambda entry: entry["label"].casefold())
+
+
+def searchable_menu(menu, applications):
+    """Keep browse groups first, then expose apps and nested actions directly."""
+    entries = list(menu["items"]) + applications
+
+    def descend(group, parents):
+        for entry in group["items"]:
+            if "items" in entry:
+                descend(entry, [*parents, entry["label"]])
+            else:
+                entries.append({**entry, "label": entry["label"] + "  · " + " / ".join(parents)})
+
+    for entry in menu["items"]:
+        if "items" in entry:
+            descend(entry, [entry["label"]])
+    return {**menu, "items": entries}
+
+
+def launch_application(app):
+    import gi
+    gi.require_version("Gio", "2.0")
+    gi.require_version("GioUnix", "2.0")
+    from gi.repository import Gio, GioUnix, GLib
+
+    try:
+        if app.get_boolean("Terminal"):
+            # Use the user's terminal while GIO still expands desktop field codes
+            # and honours the working directory. No Exec text goes through a shell.
+            if not shutil.which("foot"):
+                raise ValueError("Required application is not installed: foot")
+            keyfile = GLib.KeyFile()
+            keyfile.load_from_file(app.get_filename(), GLib.KeyFileFlags.NONE)
+            keyfile.set_boolean("Desktop Entry", "Terminal", False)
+            keyfile.set_string("Desktop Entry", "Exec", "foot -- " + app.get_string("Exec"))
+            app = GioUnix.DesktopAppInfo.new_from_keyfile(keyfile)
+            if app is None:
+                raise ValueError("Cannot read the application's desktop shortcut")
+        if not app.launch([], Gio.AppLaunchContext()):
+            raise RuntimeError("Could not launch the application")
+    except GLib.Error as exc:
+        raise RuntimeError(exc.message) from exc
+    return True
+
+
+def choose(menu, nested):
+    labels = [entry["label"] + ("  ›" if "items" in entry else "") for entry in menu["items"]]
+    if nested:
+        labels.append("‹ Back")
+    result = subprocess.run(
+        ["fuzzel", "--dmenu", "--index", "--only-match", "--no-sort",
+         "--prompt", menu["title"] + " > ", "--placeholder",
+         "Type to filter • Esc to close" if nested else "Search apps, settings and files",
+         "--lines", str(min(len(labels), 12)), "--width", "32", "--horizontal-pad", "20"],
+        input="\n".join(labels) + "\n", text=True, capture_output=True,
+    )
+    if result.returncode:
+        if result.stderr.strip():
+            raise RuntimeError(result.stderr.strip())
+        return None
+    try:
+        index = int(result.stdout.strip())
+    except ValueError as exc:
+        raise RuntimeError("Fuzzel did not return a selection index") from exc
+    if not 0 <= index < len(labels):
+        raise RuntimeError("Fuzzel returned an invalid selection")
+    return index
+
+
+def execute(entry):
+    if "application" in entry:
+        return launch_application(entry["application"])
+    terminal = entry.get("terminal", False)
+    if "path" in entry:
+        path = Path(entry["path"]).expanduser()
+        if not path.is_dir():
+            raise ValueError(f"Folder does not exist: {path}")
+        command = ["thunar", str(path)]
+    elif "packages" in entry:
+        install = entry["packages"] == "install"
+        prompt = "Package names > " if install else "Search packages > "
+        result = subprocess.run(["fuzzel", "--dmenu", "--prompt-only", prompt],
+                                input="", text=True, capture_output=True)
+        if result.returncode:
+            if result.stderr.strip():
+                raise RuntimeError(result.stderr.strip())
+            return False
+        query = result.stdout.strip()
+        if not query:
+            return False
+        if install:
+            packages = query.split()
+            if not all(re.fullmatch(r"[A-Za-z0-9@_+][A-Za-z0-9@._+:/-]*", package) for package in packages):
+                raise ValueError("Enter package names separated by spaces")
+            command = ["yay", "-S", "--", *packages]
+        else:
+            command = ["yay", "-Ss", "--", query]
+        terminal = True
+    else:
+        command = [os.path.expanduser(arg) for arg in entry["command"]]
+    if not shutil.which(command[0]):
+        raise ValueError(f"Required application is not installed: {command[0]}")
+    if terminal:
+        command = ["foot", "--title", entry["label"], *(["--hold"] if entry.get("hold", True) else []), "--", *command]
+    result = subprocess.run(command, check=False)
+    if result.returncode:
+        raise RuntimeError(f"{entry['label']} exited with status {result.returncode}")
+    return True
+
+
+def resolve_action(menu, path, expected):
+    if not re.fullmatch(r"\d+(?:\.\d+)*", path):
+        raise ValueError("Invalid menu action")
+    entry = menu
+    try:
+        for index in map(int, path.split(".")):
+            entry = entry["items"][index]
+    except (IndexError, KeyError, TypeError) as exc:
+        raise ValueError("Menu changed; reopen it before choosing this action") from exc
+    if "items" in entry or entry != expected:
+        raise ValueError("Menu changed; reopen it before choosing this action")
+    return entry
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="Validate the menu without opening it")
+    mode.add_argument("--fallback", action="store_true", help="Open the standalone Fuzzel menu")
+    mode.add_argument("--run-action", metavar="PATH", help="Run an action selected in the native drawer")
+    parser.add_argument("--section", metavar="NAME", help="Open a main menu section directly")
+    parser.add_argument("--expected-action", help="Selected action snapshot, checked before running")
+    args = parser.parse_args()
+    if args.section and (args.check or args.run_action is not None):
+        parser.error("--section cannot be combined with --check or --run-action")
+    if bool(args.run_action is not None) != bool(args.expected_action is not None):
+        parser.error("--run-action and --expected-action must be used together")
+    menu = json.loads(CONFIG.read_text())
+    validate(menu)
+    section = None
+    if args.section:
+        section = next((entry for entry in menu["items"] if entry["label"].casefold() == args.section.casefold()), None)
+        if section is None:
+            parser.error("Unknown section: " + args.section)
+        if "items" not in section:
+            execute(section)
+            return
+    if args.check:
+        print(f"Menu configuration is valid: {CONFIG}")
+        return
+    if args.run_action is not None:
+        execute(resolve_action(menu, args.run_action, json.loads(args.expected_action)))
+        return
+    if not args.fallback:
+        ipc_action = ["open", section["label"]] if section else ["toggle"]
+        result = subprocess.run(["qs", "-c", "caelestia", "ipc", "call", "jubalMenu", *ipc_action],
+                                capture_output=True, text=True)
+        if result.returncode == 0:
+            return
+        notify("The native menu is not loaded yet. Restart Caelestia with 'caelestia shell -r -d'. Opening the standalone menu.")
+    # Ignore repeated hotkeys while a menu is already open.
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR", Path.home() / ".cache"))
+    runtime.mkdir(parents=True, exist_ok=True)
+    with (runtime / "jubal-launcher.lock").open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        stack = [searchable_menu(menu, application_entries())]
+        if section:
+            stack.append({**section, "items": section["items"] + (application_entries() if section.get("applications") else [])})
+        while stack:
+            index = choose(stack[-1], len(stack) > 1)
+            if index is None:
+                return
+            if index == len(stack[-1]["items"]):
+                stack.pop()
+                continue
+            entry = stack[-1]["items"][index]
+            if "items" in entry:
+                stack.append(entry)
+                continue
+            # The launched app should not prevent opening a new launcher.
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            try:
+                if execute(entry):
+                    return
+            except (OSError, ValueError, RuntimeError) as exc:
+                notify(str(exc))
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, RuntimeError) as exc:
+        notify(str(exc))
+        sys.exit(1)

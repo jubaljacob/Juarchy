@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Screen sharing test</title>
+<style>
+  :root { color-scheme: dark; font: 16px system-ui, sans-serif; }
+  body { max-width: 960px; margin: 40px auto; padding: 0 24px; background: #141923; color: #eef2fa; }
+  h1 { font-size: 26px; }
+  p { line-height: 1.6; }
+  button { font: inherit; background: #a8c8ff; color: #17263e; border: 0; border-radius: 10px; padding: 12px 18px; margin: 0 8px 12px 0; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  video { width: 100%; max-height: 480px; background: #000; border-radius: 12px; display: block; }
+  textarea { box-sizing: border-box; width: 100%; height: 190px; margin-top: 20px; padding: 16px; background: #202838; color: inherit; border: 1px solid #455570; border-radius: 10px; font: 14px ui-monospace, monospace; }
+</style>
+<h1>Screen sharing test</h1>
+<p>For the tab test, select the “Animated sharing sample” tab opened alongside this page. For window or screen tests, check whether the picture updates when you move or type in the selected window. Keep that window visible.</p>
+<p>This page previews the capture locally. It does not upload, record, or send it to anyone.</p>
+<button id="tab">Test a browser tab</button>
+<button id="window">Test a window</button>
+<button id="screen">Test a screen</button>
+<button id="camera">Test camera</button>
+<button id="stop" disabled>Stop sharing</button>
+<video id="preview" autoplay muted playsinline></video>
+<textarea id="report" readonly aria-label="Diagnostic report"></textarea>
+<script>
+  const video = document.getElementById('preview');
+  const report = document.getElementById('report');
+  const stopButton = document.getElementById('stop');
+  let stream, timer, details = '', initialFrames = 0;
+  function stop() {
+    clearInterval(timer);
+    if (stream) stream.getTracks().forEach(track => track.stop());
+    stream = null;
+    video.srcObject = null;
+    stopButton.disabled = true;
+  }
+  async function capture(surface) {
+    stop();
+    report.value = 'Opening the sharing picker…';
+    try {
+      if (!navigator.mediaDevices?.getDisplayMedia) throw new Error('Screen capture API is unavailable in this browser or context.');
+      stream = surface === 'camera'
+        ? await navigator.mediaDevices.getUserMedia({video: true, audio: false})
+        : await navigator.mediaDevices.getDisplayMedia({video: {displaySurface: surface}, audio: false});
+      video.srcObject = stream;
+      await video.play();
+      const track = stream.getVideoTracks()[0];
+      const settings = track.getSettings();
+      initialFrames = video.getVideoPlaybackQuality?.().totalVideoFrames || 0;
+      details = 'Capture started\nSurface: ' + (surface === 'camera' ? 'camera' : (settings.displaySurface || 'unknown')) +
+        '\nSize: ' + settings.width + ' × ' + settings.height + '\nReported FPS: ' + (settings.frameRate || 'unknown');
+      stopButton.disabled = false;
+      const update = () => {
+        const frames = (video.getVideoPlaybackQuality?.().totalVideoFrames || 0) - initialFrames;
+        report.value = details + '\nTrack: ' + track.readyState + ', muted: ' + track.muted +
+          '\nDecoded frames since start: ' + frames + '\nPreview size: ' + video.videoWidth + ' × ' + video.videoHeight;
+      };
+      update();
+      timer = setInterval(update, 1000);
+      track.addEventListener('ended', () => { clearInterval(timer); stopButton.disabled = true; report.value += '\nSharing ended.'; });
+    } catch (error) {
+      stop();
+      report.value = 'Capture failed\n' + error.name + ': ' + error.message;
+    }
+  }
+  document.getElementById('window').onclick = () => capture('window');
+  document.getElementById('tab').onclick = () => capture('browser');
+  document.getElementById('screen').onclick = () => capture('monitor');
+  document.getElementById('camera').onclick = () => capture('camera');
+  stopButton.onclick = () => { stop(); report.value += '\nStopped.'; };
+  window.addEventListener('pagehide', stop);
+  report.value = 'Ready. Secure context: ' + window.isSecureContext;
+</script>
+</html>

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Animated sharing sample</title>
+<style>
+  :root { color-scheme: dark; font: 20px system-ui, sans-serif; }
+  body { margin: 10vh auto; max-width: 720px; padding: 24px; background: #141923; color: #eef2fa; }
+  .track { overflow: hidden; height: 80px; border-radius: 16px; background: #283448; }
+  .ball { width: 80px; height: 80px; border-radius: 50%; background: #a8c8ff; animation: move 3s ease-in-out infinite alternate; }
+  @keyframes move { from { transform: translateX(0); } to { transform: translateX(400px); } }
+  output { font: 32px ui-monospace, monospace; }
+</style>
+<h1>Animated sharing sample</h1>
+<p>Return to the screen sharing test tab and select this tab from the sharing picker. The ball should move and the time should update in the preview.</p>
+<div class="track"><div class="ball"></div></div>
+<p><output id="clock"></output></p>
+<script>
+  function update() { document.getElementById('clock').textContent = new Date().toLocaleTimeString(); }
+  update();
+  setInterval(update, 1000);
+</script>
+</html>

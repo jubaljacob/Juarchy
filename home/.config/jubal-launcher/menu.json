@@ -1,0 +1,426 @@
+{
+  "title": "Menu",
+  "items": [
+    {
+      "label": "Apps",
+      "title": "Apps",
+      "items": [
+        {
+          "label": "Web apps \u2014 manage websites",
+          "command": [
+            "jubal-desktop-tools",
+            "webapps"
+          ]
+        },
+        {
+          "label": "Terminal",
+          "command": [
+            "foot"
+          ]
+        },
+        {
+          "label": "Text editor",
+          "command": [
+            "nvim"
+          ],
+          "terminal": true,
+          "hold": false
+        },
+        {
+          "label": "File transfer (LocalSend)",
+          "command": [
+            "localsend"
+          ]
+        },
+        {
+          "label": "Passwords",
+          "command": [
+            "1password"
+          ]
+        },
+        {
+          "label": "Files",
+          "title": "Files",
+          "items": [
+            {
+              "label": "Home",
+              "path": "~"
+            },
+            {
+              "label": "Documents",
+              "path": "~/Documents"
+            },
+            {
+              "label": "Downloads",
+              "path": "~/Downloads"
+            },
+            {
+              "label": "Pictures",
+              "path": "~/Pictures"
+            },
+            {
+              "label": "Videos",
+              "path": "~/Videos"
+            },
+            {
+              "label": "Projects",
+              "path": "~/Projects"
+            },
+            {
+              "label": "Work",
+              "path": "~/Work"
+            },
+            {
+              "label": "Local scripts",
+              "path": "~/.local/bin"
+            }
+          ]
+        }
+      ],
+      "applications": true,
+      "shortcut": "Super + Ctrl + Alt + A"
+    },
+    {
+      "label": "Triggers",
+      "title": "Triggers",
+      "items": [
+        {
+          "label": "Screenshot \u2014 select region",
+          "command": [
+            "caelestia",
+            "screenshot",
+            "-r"
+          ]
+        },
+        {
+          "label": "Screenshot \u2014 full screen",
+          "command": [
+            "caelestia",
+            "screenshot"
+          ]
+        },
+        {
+          "label": "Screen recording \u2014 start or stop",
+          "command": [
+            "caelestia",
+            "record"
+          ]
+        },
+        {
+          "label": "Screen recording \u2014 pause or resume",
+          "command": [
+            "caelestia",
+            "record",
+            "-p"
+          ]
+        },
+        {
+          "label": "Clipboard history",
+          "command": [
+            "caelestia",
+            "clipboard"
+          ]
+        }
+      ],
+      "shortcut": "Super + Ctrl + Alt + T"
+    },
+    {
+      "label": "Style",
+      "title": "Style",
+      "items": [
+        {
+          "label": "Wallpaper and appearance",
+          "command": [
+            "caelestia",
+            "shell",
+            "nexus",
+            "open"
+          ]
+        },
+        {
+          "label": "Wallpapers folder",
+          "path": "~/Pictures/Wallpapers"
+        }
+      ],
+      "shortcut": "Super + Ctrl + Alt + S"
+    },
+    {
+      "label": "Setup",
+      "title": "Setup",
+      "items": [
+        {
+          "label": "Keyboard shortcut finder",
+          "command": [
+            "jubal-desktop-tools",
+            "shortcuts"
+          ],
+          "shortcut": "Super + K"
+        },
+        {
+          "label": "Audio",
+          "command": [
+            "pavucontrol"
+          ]
+        },
+        {
+          "label": "Bluetooth",
+          "command": [
+            "blueman-manager"
+          ]
+        },
+        {
+          "label": "Network",
+          "command": [
+            "nm-connection-editor"
+          ]
+        },
+        {
+          "label": "Displays",
+          "command": [
+            "nwg-displays"
+          ]
+        },
+        {
+          "label": "Edit launcher menu",
+          "command": [
+            "nvim",
+            "~/.config/jubal-launcher/menu.json"
+          ],
+          "terminal": true,
+          "hold": false
+        },
+        {
+          "label": "Edit keyboard shortcuts",
+          "command": [
+            "nvim",
+            "~/.config/hypr/hyprland.lua"
+          ],
+          "terminal": true,
+          "hold": false
+        }
+      ],
+      "shortcut": "Super + Ctrl + Alt + C"
+    },
+    {
+      "label": "Install",
+      "title": "Install",
+      "items": [
+        {
+          "label": "Install packages \u2014 Arch + AUR",
+          "command": [
+            "foot",
+            "--app-id",
+            "foot.jubal-packages-all",
+            "--title",
+            "Install packages \u2014 Arch + AUR",
+            "--window-size-chars",
+            "120x38",
+            "--",
+            "jubal-packages",
+            "all"
+          ]
+        },
+        {
+          "label": "Install web app",
+          "command": [
+            "jubal-desktop-tools",
+            "webapps",
+            "--add"
+          ]
+        },
+        {
+          "label": "Downloads",
+          "path": "~/Downloads"
+        },
+        {
+          "label": "Package builds",
+          "path": "~/builds"
+        },
+        {
+          "label": "Local application shortcuts",
+          "path": "~/.local/share/applications"
+        },
+        {
+          "label": "Package cache",
+          "path": "/var/cache/pacman/pkg"
+        }
+      ],
+      "shortcut": "Super + Ctrl + Alt + I"
+    },
+    {
+      "label": "Remove",
+      "title": "Remove",
+      "items": [
+        {
+          "label": "Packages \u2014 search and uninstall",
+          "command": [
+            "foot",
+            "--app-id",
+            "foot.jubal-packages-remove",
+            "--title",
+            "Remove packages \u2014 Search and uninstall",
+            "--window-size-chars",
+            "110x34",
+            "--",
+            "jubal-packages",
+            "remove"
+          ]
+        },
+        {
+          "label": "Remove web app",
+          "command": [
+            "jubal-desktop-tools",
+            "webapps"
+          ]
+        }
+      ],
+      "shortcut": "Super + Ctrl + Alt + R"
+    },
+    {
+      "label": "Update",
+      "title": "Update",
+      "items": [
+        {
+          "label": "Update system and applications",
+          "command": [
+            "yay",
+            "-Syu"
+          ],
+          "terminal": true
+        }
+      ],
+      "shortcut": "Super + Ctrl + Alt + U"
+    },
+    {
+      "label": "Snaps",
+      "command": [
+        "thunar",
+        "admin:///.snapshots"
+      ],
+      "shortcut": "Super + Ctrl + Alt + N"
+    },
+    {
+      "label": "About",
+      "title": "About",
+      "items": [
+        {
+          "label": "System information",
+          "command": [
+            "hostnamectl"
+          ],
+          "terminal": true
+        },
+        {
+          "label": "Kernel version",
+          "command": [
+            "uname",
+            "-r"
+          ],
+          "terminal": true
+        },
+        {
+          "label": "Hyprland version",
+          "command": [
+            "hyprctl",
+            "version"
+          ],
+          "terminal": true
+        },
+        {
+          "label": "Caelestia version",
+          "command": [
+            "caelestia",
+            "--version"
+          ],
+          "terminal": true
+        },
+        {
+          "label": "Installed packages",
+          "command": [
+            "pacman",
+            "-Q"
+          ],
+          "terminal": true
+        }
+      ],
+      "shortcut": "Super + Ctrl + Alt + B"
+    },
+    {
+      "label": "System",
+      "title": "System",
+      "items": [
+        {
+          "label": "Take snapshot now",
+          "command": [
+            "snap-now"
+          ],
+          "terminal": true
+        },
+        {
+          "label": "Activity monitor",
+          "command": [
+            "btop"
+          ],
+          "terminal": true,
+          "hold": false
+        },
+        {
+          "label": "Disk usage",
+          "command": [
+            "df",
+            "-h"
+          ],
+          "terminal": true
+        },
+        {
+          "label": "Disks and mount points",
+          "command": [
+            "lsblk",
+            "-f"
+          ],
+          "terminal": true
+        },
+        {
+          "label": "Failed services",
+          "command": [
+            "systemctl",
+            "--failed"
+          ],
+          "terminal": true
+        },
+        {
+          "label": "Boot warnings and errors",
+          "command": [
+            "journalctl",
+            "-b",
+            "-p",
+            "warning"
+          ],
+          "terminal": true
+        },
+        {
+          "label": "System configuration",
+          "path": "/etc"
+        },
+        {
+          "label": "User configuration",
+          "path": "~/.config"
+        },
+        {
+          "label": "Mounted drives",
+          "path": "/mnt"
+        },
+        {
+          "label": "Lock screen",
+          "command": [
+            "caelestia",
+            "shell",
+            "lock",
+            "lock"
+          ]
+        }
+      ],
+      "shortcut": "Super + Ctrl + Alt + Y"
+    }
+  ]
+}

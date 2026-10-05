@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Desktop Menu
+Comment=Grouped launcher for applications, installation, system, settings and files
+Exec="@HOME@/.local/bin/jubal-launcher"
+Icon=applications-system
+Terminal=false
+Categories=Utility;
+Keywords=menu;launcher;install;system;settings;files;

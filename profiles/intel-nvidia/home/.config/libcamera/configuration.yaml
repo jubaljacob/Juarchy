@@ -1,0 +1,6 @@
+# NVIDIA EGL fails during OV08X40 debayering on this machine.
+# Use libcamera's CPU software ISP for native apps and PipeWire.
+version: 1
+configuration:
+  software_isp:
+    mode: cpu

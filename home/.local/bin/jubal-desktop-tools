@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+"""Keyboard shortcut finder, web app manager and launcher uninstall actions."""
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+from urllib.parse import urlsplit
+import uuid
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
+from jubal_launcher.terminal import run_removal
+
+HOME = Path.home()
+DATA = Path(os.environ.get('XDG_DATA_HOME', HOME / '.local/share'))
+APPLICATIONS = DATA / 'applications'
+SELF = HOME / '.local/bin/jubal-desktop-tools'
+WEB_PREFIX = 'jubal-web-'
+BROWSERS = {'Chromium': 'chromium', 'Google Chrome': 'google-chrome-stable', 'Brave': 'brave'}
+
+
+def gio():
+    import gi
+    gi.require_version('Gio', '2.0')
+    gi.require_version('GioUnix', '2.0')
+    from gi.repository import GioUnix
+    return GioUnix
+
+
+def gtk():
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk
+    if not Gtk.init_check()[0]:
+        raise RuntimeError('A graphical desktop session is required.')
+    return Gtk
+
+
+def message(title, detail, confirm=False, parent=None):
+    Gtk = gtk()
+    dialog = Gtk.MessageDialog(transient_for=parent, modal=True,
+                               message_type=Gtk.MessageType.QUESTION if confirm else Gtk.MessageType.INFO,
+                               buttons=Gtk.ButtonsType.NONE, text=title)
+    dialog.format_secondary_text(detail)
+    if confirm:
+        dialog.add_button('Cancel', Gtk.ResponseType.CANCEL)
+        dialog.add_button('Remove', Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+    else:
+        dialog.add_button('Close', Gtk.ResponseType.CLOSE)
+    response = dialog.run()
+    dialog.destroy()
+    return response == Gtk.ResponseType.OK
+
+
+def validate_url(value):
+    value = value.strip()
+    if any(ord(c) < 33 or ord(c) == 127 for c in value):
+        raise ValueError('The URL cannot contain spaces or control characters.')
+    parts = urlsplit(value)
+    if parts.scheme not in ('https', 'http') or not parts.hostname or parts.username or parts.password:
+        raise ValueError('Enter a complete https:// or http:// URL without embedded credentials.')
+    return value
+
+
+def desktop_text(value):
+    if not value.strip() or any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise ValueError('Names and icons must be nonempty single-line text.')
+    return value.strip().replace('\\', '\\\\')
+
+
+def web_path(identifier):
+    identifier = identifier.removesuffix('.desktop')
+    if not re.fullmatch(r'jubal-web-[0-9a-f]{32}', identifier):
+        raise ValueError('Invalid managed web app identifier.')
+    path = APPLICATIONS / (identifier + '.desktop')
+    if path.is_symlink():
+        raise ValueError('Refusing to change a linked desktop shortcut.')
+    return path
+
+
+def read_web(identifier):
+    path = web_path(identifier)
+    app = gio().DesktopAppInfo.new_from_filename(str(path))
+    if app is None or not app.get_boolean('X-Jubal-WebApp'):
+        raise ValueError('This is not a managed web app.')
+    return {'id': path.stem, 'name': app.get_name(),
+            'url': app.get_string('X-Jubal-URL'), 'browser': app.get_string('X-Jubal-Browser'),
+            'icon': app.get_string('Icon') or 'applications-internet'}
+
+
+def save_web(name, url, browser, icon='applications-internet', identifier=None):
+    name, icon = desktop_text(name), desktop_text(icon)
+    url = validate_url(url)
+    if browser not in BROWSERS.values() or not shutil.which(browser):
+        raise ValueError('Choose an installed Chromium-based browser.')
+    identifier = identifier or WEB_PREFIX + uuid.uuid4().hex
+    path = web_path(identifier)
+    if path.exists():
+        read_web(identifier)  # Never overwrite an unmanaged entry.
+    APPLICATIONS.mkdir(parents=True, exist_ok=True)
+    executable = str(SELF).replace('\\', '\\\\\\\\').replace('"', '\\\\"').replace('`', '\\\\`').replace('$', '\\\\$').replace('%', '%%')
+    text = ('[Desktop Entry]\nType=Application\nVersion=1.0\n'
+            f'Name={name}\nComment=Web app\nExec="{executable}" run-web {identifier}\n'
+            f'Icon={icon}\nTerminal=false\nCategories=Network;WebBrowser;\n'
+            f'StartupWMClass={identifier}\nX-Jubal-WebApp=true\n'
+            f'X-Jubal-URL={url.replace(chr(92), chr(92)*2)}\nX-Jubal-Browser={browser}\n')
+    temporary = path.with_suffix('.desktop.tmp')
+    # Exclusive creation avoids following an existing temporary-file link.
+    with temporary.open('x') as output:
+        output.write(text)
+    temporary.replace(path)
+    refresh_desktop()
+    return identifier
+
+
+def refresh_desktop():
+    if shutil.which('update-desktop-database'):
+        subprocess.run(['update-desktop-database', str(APPLICATIONS)], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def remove_web(identifier):
+    read_web(identifier)
+    web_path(identifier).unlink()
+    refresh_desktop()
+
+
+def run_web(identifier):
+    app = read_web(identifier)
+    browser = app['browser']
+    if browser not in BROWSERS.values() or not shutil.which(browser):
+        raise ValueError('The browser for this web app is no longer installed. Edit it in Web apps.')
+    subprocess.Popen([browser, '--ozone-platform=wayland', '--app=' + validate_url(app['url']),
+                      '--class=' + app['id']], start_new_session=True)
+
+
+def resolve_application(identifier):
+    if not identifier or '/' in identifier or '\0' in identifier or identifier.startswith('-'):
+        raise ValueError('Invalid application identifier.')
+    identifier = identifier if identifier.endswith('.desktop') else identifier + '.desktop'
+    app = gio().DesktopAppInfo.new(identifier)
+    if app is None or not app.get_filename():
+        raise ValueError('The application is no longer installed. Refresh the launcher.')
+    return app
+
+
+def package_for(app):
+    result = subprocess.run(['/usr/bin/pacman', '-Qqo', '--', app.get_filename()],
+                            text=True, capture_output=True, check=False)
+    packages = result.stdout.splitlines()
+    if result.returncode or len(packages) != 1 or not re.fullmatch(r'[a-zA-Z0-9@_+][a-zA-Z0-9@._+\-]*', packages[0]):
+        return None
+    return packages[0]
+
+
+def uninstall(identifier):
+    app = resolve_application(identifier)
+    path = Path(app.get_filename())
+    if path.parent == APPLICATIONS and path.stem.startswith(WEB_PREFIX):
+        web = read_web(path.stem)
+        if message('Remove ' + web['name'] + '?', 'Remove this web app shortcut? Your browser, saved logins and website data will be kept.', True):
+            remove_web(path.stem)
+        return
+    package = package_for(app)
+    if not package:
+        message('No removable Arch package found',
+                'This shortcut is not owned by an installed Arch/AUR package. Remove the app through the tool that installed it. No files were deleted.')
+        return
+    if message('Uninstall ' + app.get_name() + '?',
+               f'This app belongs to package “{package}”. Other apps supplied by that package will also be removed. A terminal will show the package and unused dependency removal list for your final confirmation.', True):
+        subprocess.Popen(['foot', '--title', 'Uninstall ' + app.get_name(), '--',
+                          str(SELF), 'remove-package', identifier, package], start_new_session=True)
+
+
+def remove_package(identifier, expected):
+    # Resolve again after the confirmation, rather than trusting a stale owner.
+    package = package_for(resolve_application(identifier))
+    if not package or package != expected:
+        raise ValueError('Application ownership changed. Reopen app search before removing it.')
+    return run_removal(['sudo', 'pacman', '-Rns', '--', package], [package])
+
+
+def shortcut_rows(bindings):
+    rows = []
+    for item in bindings:
+        mask = item.get('modmask', 0)
+        modifiers = [name for bit, name in ((64, 'Super'), (4, 'Ctrl'), (8, 'Alt'), (1, 'Shift')) if mask & bit]
+        key = item.get('key') or 'code:' + str(item.get('keycode', '?'))
+        description = item.get('description') or item.get('dispatcher', 'Shortcut')
+        submap = item.get('submap')
+        if submap and submap != 'default':
+            description += ' [' + submap + ']'
+        rows.append(' + '.join(modifiers + [key]) + '  —  ' + ' '.join(description.split()))
+    return sorted(set(rows), key=str.casefold)
+
+
+def shortcut_fallback():
+    # Read literal bindings without evaluating the user's Lua configuration.
+    text = (HOME / '.config/hypr/hyprland.lua').read_text()
+    rows = []
+    for line in text.splitlines():
+        match = re.match(r'\s*(?:app|o\.bind)\("([^"]+)",\s*"([^"]+)"', line)
+        if match:
+            rows.append(match[1] + '  —  ' + match[2])
+    for workspace in range(1, 11):
+        key = str(workspace % 10)
+        rows.extend([f'SUPER + {key}  —  Switch to workspace {workspace}',
+                     f'SUPER + SHIFT + {key}  —  Move window to workspace {workspace}',
+                     f'SUPER + SHIFT + ALT + {key}  —  Move window silently to workspace {workspace}'])
+    return sorted(set(rows), key=str.casefold)
+
+
+def shortcuts(list_only=False):
+    result = subprocess.run(['hyprctl', '-j', 'binds'], capture_output=True, text=True, check=False)
+    try:
+        if result.returncode:
+            raise ValueError()
+        rows = shortcut_rows(json.loads(result.stdout))
+        title = 'Keyboard shortcuts'
+    except (ValueError, TypeError, AttributeError):
+        rows = shortcut_fallback()
+        title = 'Keyboard shortcuts (saved config)'
+    if list_only:
+        print('\n'.join(rows))
+        return
+    subprocess.run(['fuzzel', '--dmenu', '--only-match', '--prompt', title + ' > ',
+                    '--match-mode', 'fzf', '--placeholder', 'Search by keys or action · Esc to close', '--width', '65', '--lines', '15'],
+                   input='\n'.join(rows) + '\n', text=True, stdout=subprocess.DEVNULL, check=False)
+
+
+def webapps(add_first=False):
+    Gtk = gtk()
+    window = Gtk.Window(title='Web apps')
+    window.set_default_size(620, 420)
+    window.set_border_width(18)
+    window.connect('destroy', Gtk.main_quit)
+    layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    window.add(layout)
+    search = Gtk.SearchEntry(placeholder_text='Search web apps')
+    layout.pack_start(search, False, False, 0)
+    store = Gtk.ListStore(str, str, str)
+    filtered = store.filter_new()
+    filtered.set_visible_func(lambda model, iterator, data: search.get_text().casefold() in
+                              (model[iterator][1] + ' ' + model[iterator][2]).casefold())
+    search.connect('search-changed', lambda *_: filtered.refilter())
+    tree = Gtk.TreeView(model=filtered)
+    for index, label in ((1, 'App'), (2, 'Website')):
+        renderer = Gtk.CellRendererText(ellipsize=3)
+        column = Gtk.TreeViewColumn(label, renderer, text=index)
+        column.set_expand(True)
+        tree.append_column(column)
+    scroll = Gtk.ScrolledWindow()
+    scroll.add(tree)
+    layout.pack_start(scroll, True, True, 0)
+    hint = Gtk.Label(label='Add a website to make it searchable in Apps.', xalign=0)
+    layout.pack_start(hint, False, False, 0)
+
+    def reload():
+        store.clear()
+        for path in sorted(APPLICATIONS.glob(WEB_PREFIX + '*.desktop')):
+            try:
+                app = read_web(path.stem)
+                store.append([app['id'], app['name'], app['url']])
+            except (ValueError, OSError):
+                continue
+
+    def selected():
+        model, iterator = tree.get_selection().get_selected()
+        return model[iterator][0] if iterator else None
+
+    def edit(identifier=None):
+        app = read_web(identifier) if identifier else {}
+        dialog = Gtk.Dialog(title='Edit web app' if identifier else 'Add web app', transient_for=window, modal=True)
+        dialog.add_button('Cancel', Gtk.ResponseType.CANCEL)
+        dialog.add_button('Save', Gtk.ResponseType.OK)
+        dialog.set_default_size(480, -1)
+        box = dialog.get_content_area()
+        box.set_spacing(10)
+        box.set_border_width(16)
+        fields = {}
+        for key, title, default in [('name', 'Name', ''), ('url', 'Website URL', 'https://'), ('icon', 'Icon name or local icon path', 'applications-internet')]:
+            box.pack_start(Gtk.Label(label=title, xalign=0), False, False, 0)
+            field = Gtk.Entry(text=app.get(key, default))
+            box.pack_start(field, False, False, 0)
+            fields[key] = field
+        browser = Gtk.ComboBoxText()
+        available = [(label, command) for label, command in BROWSERS.items() if shutil.which(command)]
+        for label, command in available:
+            browser.append(command, label)
+        browser.set_active_id(app.get('browser', available[0][1] if available else ''))
+        box.pack_start(Gtk.Label(label='Browser', xalign=0), False, False, 0)
+        box.pack_start(browser, False, False, 0)
+        dialog.show_all()
+        while dialog.run() == Gtk.ResponseType.OK:
+            try:
+                save_web(fields['name'].get_text(), fields['url'].get_text(), browser.get_active_id(), fields['icon'].get_text(), identifier)
+                break
+            except (ValueError, OSError) as error:
+                message('Could not save web app', str(error), parent=dialog)
+        dialog.destroy()
+        reload()
+
+    def action(name):
+        try:
+            identifier = selected()
+            if name == 'Add':
+                edit()
+            elif identifier:
+                if name == 'Edit':
+                    edit(identifier)
+                elif name == 'Open':
+                    run_web(identifier)
+                elif name == 'Remove' and message('Remove web app?', 'Remove the shortcut? Browser data and saved logins will be kept.', True, window):
+                    remove_web(identifier)
+                    reload()
+        except (ValueError, OSError) as error:
+            message('Web apps', str(error), parent=window)
+
+    buttons = Gtk.Box(spacing=8)
+    for name in ('Add', 'Edit', 'Open', 'Remove'):
+        button = Gtk.Button(label=name)
+        button.connect('clicked', lambda _, name=name: action(name))
+        buttons.pack_start(button, False, False, 0)
+    layout.pack_start(buttons, False, False, 0)
+    tree.connect('row-activated', lambda *_: action('Open'))
+    reload()
+    window.show_all()
+    if add_first:
+        from gi.repository import GLib
+        GLib.idle_add(lambda: (edit(), False)[1])
+    Gtk.main()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest='action', required=True)
+    sub.add_parser('shortcuts').add_argument('--list', action='store_true')
+    sub.add_parser('webapps').add_argument('--add', action='store_true')
+    for name in ('run-web', 'uninstall', 'remove-package'):
+        command = sub.add_parser(name)
+        command.add_argument('identifier')
+        if name == 'remove-package':
+            command.add_argument('package')
+    args = parser.parse_args()
+    if args.action == 'shortcuts':
+        shortcuts(args.list)
+    elif args.action == 'webapps':
+        webapps(args.add)
+    elif args.action == 'run-web':
+        run_web(args.identifier)
+    elif args.action == 'uninstall':
+        uninstall(args.identifier)
+    elif args.action == 'remove-package':
+        return remove_package(args.identifier, args.package)
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, RuntimeError) as error:
+        print(str(error), file=sys.stderr)
+        if sys.stdout.isatty():
+            sys.exit(1)
+        try:
+            message('Desktop tools', str(error))
+        except Exception:
+            pass
+        sys.exit(1)

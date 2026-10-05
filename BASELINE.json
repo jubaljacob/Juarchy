@@ -1,0 +1,32 @@
+{
+  "name": "Jubal Desktop",
+  "captured": "2026-10-05",
+  "upstream": {
+    "project": "caelestia-dots/shell",
+    "version": "2.5.0",
+    "revision": "d999d4878ee4cec134168e60d913714566a8cfa6",
+    "archive_sha256": "6bef9feff9f9c6afeb6fdf0b9bb1cfc3cfd7dff4c2a020e8079d6720975f3b6a"
+  },
+  "runtime": {
+    "caelestia-cli": "1.1.3-1",
+    "quickshell": "0.3.1.r19.g5d5d498-1",
+    "hyprland": "0.56.2-4"
+  },
+  "profile": "intel-nvidia",
+  "theme": {
+    "name": "gruvbox",
+    "flavour": "soft",
+    "mode": "dark"
+  },
+  "known_issues": [
+    "Discord desktop screen-sharing and built-in camera compatibility are not yet resolved."
+  ],
+  "excluded": [
+    "browser/account data",
+    "SSH keys and credentials",
+    "notifications and application history",
+    "device brightness state",
+    "personal wallpaper files",
+    "system-wide login, storage and snapshot policy"
+  ]
+}

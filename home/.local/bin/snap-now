@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+helper=/usr/local/libexec/jubal-snaps
+if [[ ! -x $helper ]]; then
+    printf 'Snapshot support is optional and has not been set up on this system.\nSee docs/PORTABILITY.md in the Jubal Desktop repository.\n' >&2
+    exit 1
+fi
+exec sudo "$helper" create "${*:-Manual snapshot}"

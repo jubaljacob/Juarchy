@@ -1,0 +1,5 @@
+# Upstream shell/runtime dependencies absent from the official repositories on the baseline system
+caelestia-cli
+caelestia-shell
+qt6-m3shapes-git
+quickshell-git

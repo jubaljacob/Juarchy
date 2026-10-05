@@ -1,0 +1,4 @@
+-- Local settings for this computer. The installer creates this file once
+-- and leaves it untouched on subsequent installs. It is not synced to GitHub.
+-- Example:
+-- hl.monitor({ output = "eDP-1", mode = "preferred", position = "auto", scale = 1.5 })
