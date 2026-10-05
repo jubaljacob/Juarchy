@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Save and restore wallpaper/colour presets for Juarchy."""
+import argparse
+import copy
+import fcntl
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+
+def store_path():
+    return Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'juarchy/themes.json'
+
+
+def read_store(path):
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict):
+        raise ValueError('Invalid theme preset file')
+    return data
+
+
+def write_store(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(data, stream, indent=2)
+            stream.write('\n')
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def validate_wallpaper(value):
+    from caelestia.utils.wallpaper import is_valid_image
+    from PIL import Image
+    wall = Path(value).expanduser().resolve()
+    if not is_valid_image(wall):
+        raise ValueError('Wallpaper is missing or unsupported: ' + str(wall))
+    with Image.open(wall) as image:
+        image.verify()
+    return wall
+
+
+def current_preset(smart):
+    from caelestia.utils.scheme import get_scheme
+    from caelestia.utils.wallpaper import get_wallpaper
+    scheme = get_scheme()
+    wall = get_wallpaper()
+    if not wall:
+        raise ValueError('Choose a wallpaper before saving a theme')
+    return {'wallpaper': str(validate_wallpaper(wall.strip())), 'smart': smart,
+            'scheme': {key: copy.deepcopy(getattr(scheme, key))
+                       for key in ('name', 'flavour', 'mode', 'variant', 'colours')}}
+
+
+def apply_preset(preset):
+    import caelestia.utils.scheme as schemes
+    from caelestia.utils.wallpaper import set_wallpaper
+    # Validate the image and scheme before changing any desktop state.
+    wall = validate_wallpaper(preset['wallpaper'])
+    data = preset['scheme']
+    if data['name'] not in schemes.get_scheme_names():
+        raise ValueError('This colour scheme is no longer available')
+    if data['flavour'] not in schemes.get_scheme_flavours(data['name']):
+        raise ValueError('This colour flavour is no longer available')
+    if data['mode'] not in schemes.get_scheme_modes(data['name'], data['flavour']):
+        raise ValueError('This light/dark mode is no longer available')
+    if data['variant'] not in schemes.scheme_variants:
+        raise ValueError('This colour variant is no longer available')
+    before = current_preset(False)
+    try:
+        schemes.scheme = schemes.Scheme(data)
+        schemes.scheme.save()
+        # Restore the recorded mode/variant exactly; the UI restores the smart
+        # preference separately for subsequent wallpaper selections.
+        set_wallpaper(wall, no_smart=True)
+    except Exception:
+        schemes.scheme = schemes.Scheme(before['scheme'])
+        schemes.scheme.save()
+        set_wallpaper(Path(before['wallpaper']), no_smart=True)
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=('list', 'save', 'apply', 'delete'))
+    parser.add_argument('name', nargs='?')
+    parser.add_argument('--no-smart', action='store_true')
+    args = parser.parse_args()
+    if args.action != 'list' and (not args.name or not args.name.strip()):
+        parser.error('A preset name is required')
+    path = store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_suffix('.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        presets = read_store(path)
+        name = args.name.strip() if args.name else None
+        if args.action == 'save':
+            if name in presets:
+                raise ValueError('That name already exists. Use a new name or remove the existing preset first.')
+            presets[name] = current_preset(not args.no_smart)
+            write_store(path, presets)
+        elif args.action == 'apply':
+            apply_preset(presets[name])
+        elif args.action == 'delete':
+            del presets[name]
+            write_store(path, presets)
+        print(json.dumps([dict(name=name, **preset) for name, preset in sorted(presets.items())]))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, ValueError, KeyError, ImportError) as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(1)

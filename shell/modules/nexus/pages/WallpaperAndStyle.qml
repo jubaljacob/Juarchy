@@ -10,6 +10,7 @@ import qs.components.controls
 import qs.components.images
 import qs.services
 import qs.modules.nexus.common
+import "wallandstyle"
 
 PageBase {
     id: root
@@ -169,6 +170,10 @@ PageBase {
                 verticalPadding: Tokens.padding.medium
                 onClicked: root.nState.openSubPage(3) // Colours page
             }
+        }
+
+        ThemePresets {
+            Layout.fillWidth: true
         }
 
         ToggleRow {

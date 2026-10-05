@@ -114,6 +114,30 @@ See [portability and known issues](docs/PORTABILITY.md) before enabling it.
 
 ## Make it your own
 
+### Wallpaper themes
+
+Open **Wallpaper & style** in desktop settings. **Use wallpaper colours**
+generates the desktop palette from the current wallpaper and updates it when
+you choose another image. **Match wallpaper brightness** lets new wallpapers
+choose light/dark mode and colour intensity; disable it to keep your chosen
+mode. Choose a fixed palette in **Colours** to stop automatic colour extraction.
+
+Enter a theme name and click **Save** to remember the current wallpaper,
+palette, mode, colour variant, and brightness matching preference together.
+Use **Apply** beside a saved theme to restore it. Preset names are unique;
+remove an old preset before saving a replacement with the same name.
+Presets live in `~/.config/juarchy/themes.json` (or your XDG configuration
+directory) and are personal settings, outside the checkout. Wallpapers are
+referenced by their original paths, so keep those images in place. Applying
+a missing image reports an error without changing the desktop.
+
+The same presets can be managed with `juarchy-theme list`,
+`juarchy-theme save "Forest"`, `juarchy-theme apply "Forest"`, and
+`juarchy-theme delete "Forest"`. Use `--no-smart` when saving from the
+terminal to record that brightness matching should be disabled. The settings
+UI restores this preference for future wallpaper selections; the command-line
+apply action restores the recorded wallpaper, mode and palette.
+
 - `shell/`: shell QML, components, native plugin source, and upstream assets.
 - `home/.config/caelestia/shell.json`: bar layout and shell preferences.
 - `home/.config/hypr/hyprland.lua`: shared compositor settings and shortcuts.
