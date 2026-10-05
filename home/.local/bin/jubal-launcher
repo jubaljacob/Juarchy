@@ -218,11 +218,11 @@ def main():
         return
     if not args.fallback:
         ipc_action = ["open", section["label"]] if section else ["toggle"]
-        result = subprocess.run(["qs", "-c", "caelestia", "ipc", "call", "jubalMenu", *ipc_action],
+        result = subprocess.run(["qs", "-c", "juarchy", "ipc", "call", "jubalMenu", *ipc_action],
                                 capture_output=True, text=True)
         if result.returncode == 0:
             return
-        notify("The native menu is not loaded yet. Restart Caelestia with 'caelestia shell -r -d'. Opening the standalone menu.")
+        notify("The native menu is not loaded yet. Restart Juarchy with 'juarchy-shell restart'. Opening the standalone menu.")
     # Ignore repeated hotkeys while a menu is already open.
     runtime = Path(os.environ.get("XDG_RUNTIME_DIR", Path.home() / ".cache"))
     runtime.mkdir(parents=True, exist_ok=True)

@@ -280,7 +280,7 @@ app("SUPER + ALT + RETURN", "Tmux", "foot -e tmux")
 app("SUPER + SHIFT + SLASH", "Passwords", "1password")
 app("SUPER + SPACE", "Desktop menu", "\"$HOME/.local/bin/jubal-launcher\"")
 app("SUPER + ALT + SPACE", "Desktop menu", "\"$HOME/.local/bin/jubal-launcher\"")
-app("SUPER + L", "Lock screen", "caelestia shell lock lock")
+app("SUPER + L", "Lock screen", "~/.local/bin/juarchy-shell lock lock")
 -- Direct launcher sections and desktop tools
 app("SUPER + K", "Keyboard shortcut finder", "\"$HOME/.local/bin/jubal-desktop-tools\" shortcuts")
 app("SUPER + CTRL + ALT + A", "Menu: Apps", "\"$HOME/.local/bin/jubal-launcher\" --section Apps")
@@ -295,7 +295,7 @@ app("SUPER + CTRL + ALT + B", "Menu: About", "\"$HOME/.local/bin/jubal-launcher\
 app("SUPER + CTRL + ALT + Y", "Menu: System", "\"$HOME/.local/bin/jubal-launcher\" --section System")
 app("SUPER + CTRL + ALT + W", "Web app manager", "\"$HOME/.local/bin/jubal-desktop-tools\" webapps")
 
-app("SUPER + SHIFT + W", "Wallpaper and appearance settings", "caelestia shell nexus open")
+app("SUPER + SHIFT + W", "Wallpaper and appearance settings", "~/.local/bin/juarchy-shell nexus open")
 app("SUPER + CTRL + A", "Audio", "pavucontrol")
 app("SUPER + CTRL + B", "Bluetooth", "blueman-manager")
 app("SUPER + CTRL + D", "Displays", "nwg-displays")
@@ -503,10 +503,10 @@ do
         { description = "Universal paste" })
 end
 
--- Start the password-prompt agent and Caelestia with Hyprland
+-- Start the password-prompt agent and Juarchy with Hyprland
 hl.on("hyprland.start", function()
     hl.exec_cmd("systemctl --user start hyprpolkitagent.service")
-    hl.exec_cmd("caelestia shell -d")
+    hl.exec_cmd("~/.local/bin/juarchy-shell start")
 end)
 
 -- Blur translucent shell pixels; ignore_alpha = 0 excludes fully transparent pixels.

@@ -19,6 +19,12 @@ ShellRoot {
     settings.watchFiles: false
 
     IpcHandler {
+        target: "juarchy"
+        function version(): string { return "Juarchy shell 0.1.0"; }
+        function ready(): bool { return true; }
+    }
+
+    IpcHandler {
         target: "jubalMenu"
         function toggle(): void {
             const state = ShellState.forActive();

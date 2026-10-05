@@ -33,7 +33,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(before, list(self.home.iterdir()))
 
     def test_full_deployment_restores_original_shell_and_files(self):
-        shell = self.home / '.config/quickshell/caelestia'
+        shell = self.home / '.config/quickshell/juarchy'
         shell.mkdir(parents=True)
         original = Path(self.temp.name) / 'original-source'
         original.write_text('original shell')
@@ -72,6 +72,16 @@ class InstallerTests(unittest.TestCase):
         machine.write_text('-- customized here\n')
         installer.apply(installer.plan('intel-nvidia', self.home), self.home)
         self.assertEqual(machine.read_text(), '-- customized here\n')
+
+    def test_install_preserves_original_caelestia_configuration(self):
+        original = self.home / '.config/quickshell/caelestia/shell.qml'
+        original.parent.mkdir(parents=True)
+        original.write_text('original desktop')
+        installer.apply(installer.plan(home=self.home), self.home)
+        self.assertEqual(original.read_text(), 'original desktop')
+        new = self.home / '.config/quickshell/juarchy'
+        self.assertIn('target: "juarchy"', (new / 'shell.qml').read_text())
+        self.assertFalse(any(p.is_symlink() for p in new.rglob('*')))
 
     def test_destination_parent_symlinks_fail_before_any_write(self):
         external = Path(self.temp.name) / 'external'

@@ -87,9 +87,13 @@
         {
           "label": "Screenshot \u2014 select region",
           "command": [
-            "caelestia",
-            "screenshot",
-            "-r"
+            "qs",
+            "-c",
+            "juarchy",
+            "ipc",
+            "call",
+            "picker",
+            "open"
           ]
         },
         {
@@ -131,8 +135,7 @@
         {
           "label": "Wallpaper and appearance",
           "command": [
-            "caelestia",
-            "shell",
+            "~/.local/bin/juarchy-shell",
             "nexus",
             "open"
           ]
@@ -327,10 +330,10 @@
           "terminal": true
         },
         {
-          "label": "Caelestia version",
+          "label": "Juarchy shell version",
           "command": [
-            "caelestia",
-            "--version"
+            "~/.local/bin/juarchy-shell",
+            "version"
           ],
           "terminal": true
         },
@@ -413,8 +416,7 @@
         {
           "label": "Lock screen",
           "command": [
-            "caelestia",
-            "shell",
+            "~/.local/bin/juarchy-shell",
             "lock",
             "lock"
           ]

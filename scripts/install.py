@@ -52,7 +52,7 @@ def plan(profile=None, home=None):
                 raise ValueError('Source symlinks are not supported: ' + str(source))
             if source.is_file():
                 entries[str(source.relative_to(tree))] = source
-    entries['.config/quickshell/caelestia'] = ROOT / 'shell'
+    entries['.config/quickshell/juarchy'] = ROOT / 'shell'
     # Keep each computer's overrides across subsequent installs.
     if home is not None and not exists(home / '.config/hypr/machine.lua'):
         entries['.config/hypr/machine.lua'] = ROOT / 'examples/machine.lua'
@@ -114,7 +114,7 @@ def apply(entries, home, shell=True):
             (backup / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
             if source is not None:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                deploy(source, target, home, shell and name == '.config/quickshell/caelestia')
+                deploy(source, target, home, shell and name == '.config/quickshell/juarchy')
     except Exception:
         # Restore all completed moves if deployment fails.
         for item in reversed(manifest['entries']):

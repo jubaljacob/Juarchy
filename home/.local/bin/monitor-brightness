@@ -29,7 +29,7 @@ def monitor_at(monitors, cursor):
 def brightness_command(monitor, direction):
     # Use the shell's persistent state and asynchronous hardware writer so
     # keys, sliders and the OSD agree. Every key press contributes to the target.
-    return ["/usr/bin/qs", "-c", "caelestia", "ipc", "call", "brightness",
+    return ["/usr/bin/qs", "-c", "juarchy", "ipc", "call", "brightness",
             "setFor", monitor["name"], "+5%" if direction == "up" else "5%-"]
 
 
@@ -46,15 +46,9 @@ def main():
         print(monitor["name"] + ": " + shlex.join(command))
         return
 
-    try:
-        response = run(*command).strip()
-    except subprocess.CalledProcessError:
-        # The packaged shell can still be running until the local override is
-        # activated. Keep the keys usable during that transition.
-        response = run(command[0], "-p", "/etc/xdg/quickshell/caelestia",
-                       *command[3:]).strip()
+    response = run(*command).strip()
     if not response.startswith("Set monitor "):
-        raise RuntimeError(response or "Caelestia did not accept the brightness change")
+        raise RuntimeError(response or "Juarchy did not accept the brightness change")
 
 
 if __name__ == "__main__":

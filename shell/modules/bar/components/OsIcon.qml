@@ -18,7 +18,7 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         onClicked: mouse => {
             if (mouse.button === Qt.LeftButton)
-                Quickshell.execDetached(["caelestia", "shell", "nexus", "open"]);
+                Quickshell.execDetached(["qs", "-c", "juarchy", "ipc", "call", "nexus", "open"]);
             else if (mouse.button === Qt.RightButton)
                 Quickshell.execDetached(["foot", "--title", "btop++", "-e", "btop"]);
         }

@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Control the Juarchy QuickShell configuration without the Caelestia CLI."""
+import argparse
+import json
+import subprocess
+import sys
+import time
+
+CONFIG = "juarchy"
+
+
+def instances():
+    result = subprocess.run(["qs", "-c", CONFIG, "list", "-j"],
+                            capture_output=True, text=True, check=True, timeout=10)
+    if result.stdout.strip().startswith("No running instances"):
+        return []
+    return json.loads(result.stdout)
+
+
+def stop():
+    for instance in instances():
+        subprocess.run(["qs", "-c", CONFIG, "kill", "--pid", str(instance["pid"])],
+                       check=True, timeout=10)
+    deadline = time.monotonic() + 8
+    while instances():
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Juarchy did not stop. No replacement instance was started.")
+        time.sleep(0.1)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", nargs="?", default="start",
+                        help="start, restart, stop, status, version, log, ipc TARGET METHOD, or TARGET METHOD")
+    parser.add_argument("arguments", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    if args.action in ("start", "restart", "stop", "status", "version") and args.arguments:
+        parser.error("This action takes no extra arguments")
+    if args.action == "version":
+        print("Juarchy shell 0.1.0 (Caelestia 2.5.0 based)")
+        return 0
+    if args.action in ("restart", "stop"):
+        stop()
+    if args.action in ("start", "restart"):
+        # Refuse to create a second desktop shell while the original is active.
+        old = subprocess.run(["qs", "-c", "caelestia", "list", "-j"],
+                             capture_output=True, text=True, check=True, timeout=10)
+        if old.stdout.strip().startswith("[") and json.loads(old.stdout):
+            raise RuntimeError("Caelestia is running. Use the repository's scripts/activate.py to switch safely.")
+        return subprocess.run(["qs", "-c", CONFIG, "-n", "-d"], check=True, timeout=20).returncode
+    if args.action == "stop":
+        return 0
+    if args.action == "status":
+        return subprocess.run(["qs", "-c", CONFIG, "list"], timeout=10).returncode
+    if args.action == "log":
+        command = ["qs", "-c", CONFIG, "log", *args.arguments]
+    else:
+        target = args.arguments if args.action == "ipc" else [args.action, *args.arguments]
+        if len(target) < 2:
+            parser.error("IPC requires a target and method")
+        command = ["qs", "-c", CONFIG, "ipc", "call", *target]
+    return subprocess.run(command).returncode
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        print("Juarchy: " + str(error), file=sys.stderr)
+        sys.exit(1)

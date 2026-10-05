@@ -14,6 +14,48 @@ The shell's QML components are copied into this repository, including the
 components that previously linked to system files. Upstream C++ plugin and
 supporting source are also included under `shell/`.
 
+The desktop shell now has its own QuickShell configuration, `juarchy`, and
+uses `juarchy-shell` for startup and controls. Its initial appearance is
+unchanged. Caelestia's native plugins, CLI theme tools, settings directory,
+state and caches remain compatibility dependencies in this first migration.
+This stage does not introduce new privacy defaults or remove features.
+
+## Switch the current desktop
+
+From an unlocked Hyprland desktop terminal, run:
+
+```sh
+python ~/Projects/jubal-desktop/scripts/activate.py
+```
+
+The switch backs up the existing files, installs an independent shell copy
+at `~/.config/quickshell/juarchy`, and routes startup, menu, lock, region
+screenshots, brightness and the audio repair helper to it. It preserves
+the computer's current Hyprland settings and personal additions. It checks
+session access before modifying files, waits for the original shell to stop,
+checks the new shell's IPC controls, and restores the previous files and
+shell if activation fails. The original Caelestia shell directory is retained.
+Run this from the desktop terminal because sandboxed agents may be unable
+to access the compositor and shell sockets.
+
+After activation:
+
+```sh
+~/.local/bin/juarchy-shell status
+~/.local/bin/juarchy-shell restart
+~/.local/bin/juarchy-shell version
+```
+
+To undo the switch, restoring the files captured immediately before activation:
+
+```sh
+python ~/Projects/jubal-desktop/scripts/activate.py --rollback
+```
+
+Rollback replaces those files with their backed-up versions and saves the
+current versions in a separate recovery backup. Keep the checkout and backups
+until you have finished checking the new shell on the desktop.
+
 ## Supported systems
 
 This is an **Arch Linux / Hyprland** baseline. It has been captured on
@@ -44,7 +86,8 @@ manifests prefer official repositories, with AUR dependencies for the current
 Caelestia runtime. `packages/baseline-versions.txt` records versions from the
 original machine; it does not pin packages or guarantee future ABI compatibility.
 The existing `caelestia-shell` package supplies the compiled native plugin and
-supporting tools. Our own QML takes precedence in the user configuration.
+supporting tools. Our own QML runs separately under the `juarchy` configuration;
+the original `caelestia` configuration is preserved.
 
 Preview and install as your desktop user, without sudo:
 
@@ -131,5 +174,6 @@ baseline commit uses a local-only author identity.
 Derived from [Caelestia Shell](https://github.com/caelestia-dots/shell)
 2.5.0, under **GPL-3.0-only**. See [LICENSE](LICENSE) and
 [upstream attribution](UPSTREAM.md). Existing assets and vendored components
-retain their original notices and licenses. Caelestia module names and IPC
-configuration names remain intact for runtime compatibility.
+retain their original notices and licenses. Caelestia native module names,
+global shortcut IDs and layer namespaces remain intact for runtime compatibility.
+QuickShell instance selection uses Juarchy's own `juarchy` configuration name.

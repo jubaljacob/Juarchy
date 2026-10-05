@@ -26,3 +26,9 @@ we can maintain them later. The initial installer uses the installed native
 plugin package rather than replacing system libraries. The upstream build
 instructions remain in `shell/UPSTREAM_README.md`; rebuilding and packaging
 our own native runtime is a future migration requiring ABI checks.
+
+Juarchy shell 0.1.0 introduces independent QuickShell instance selection and
+controls while preserving the current interface. Caelestia native import names,
+global shortcuts, layer namespaces and shared theme/state paths are retained
+until those dependencies are replaced together. The Juarchy entry point omits
+the upstream crash-report URL. No new privacy policy is implemented at this stage.
