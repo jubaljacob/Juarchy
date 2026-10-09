@@ -68,17 +68,24 @@ StyledWindow {
     name: "drawers"
     WlrLayershell.exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: (fsTransitionProg > 0 && contentItem.Config.general.showOverFullscreen) || (hasSpecialWorkspace && hasFullscreenOnNormalWs) ? WlrLayer.Overlay : WlrLayer.Top
-    WlrLayershell.keyboardFocus: screenState.launcher || screenState.session ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: screenState.launcher || screenState.session || screenState.dashboard ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
 
     mask: hasFullscreen ? emptyRegion : regions
 
-    // Blur only the dashboard background; Colours keeps the layer rule enabled.
+    // The notch and dashboard share one translucent, blurred surface.
     BackgroundEffect.blurRegion: Region {
         x: dashBg.x
         y: dashBg.y
-        width: root.hasFullscreen ? 0 : dashBg.width
-        height: root.hasFullscreen ? 0 : dashBg.height
+        width: root.hasFullscreen || !dashBg.visible ? 0 : dashBg.width
+        height: root.hasFullscreen || !dashBg.visible ? 0 : dashBg.height
         radius: dashBg.radius
+
+        Region {
+            x: notchBg.x - root.contentItem.Config.border.smoothing
+            y: 0
+            width: root.hasFullscreen || !notchBg.visible ? 0 : notchBg.width + root.contentItem.Config.border.smoothing * 2
+            height: notchBg.height + root.contentItem.Config.border.smoothing
+        }
     }
 
     anchors.top: true
@@ -126,7 +133,7 @@ StyledWindow {
             const conf = root.contentItem.Config;
             if ((s.launcher && conf.launcher.enabled) || (s.session && conf.session.enabled) || (s.sidebar && conf.sidebar.enabled))
                 return true;
-            if (!conf.dashboard.showOnHover && s.dashboard && conf.dashboard.enabled)
+            if (s.dashboard && conf.dashboard.enabled)
                 return true;
             if (panels.popouts.hasCurrent && panels.popouts.currentName.startsWith("traymenu") && (panels.popouts.current as StackView)?.depth > 1)
                 return true;
@@ -205,8 +212,8 @@ StyledWindow {
             panel: panels.sidebar
             deformAmount: 0.03
             implicitHeight: panel.height * (1 / rawDeformMatrix.m22) + 2
-            exclude: panels.sidebar.offsetScale > 0.08 ? [] : [utilsBg]
-            bottomLeftRadius: Math.max(0, Math.min(1, panels.sidebar.offsetScale / 0.3)) * radius
+            exclude: panels.sidebar.offsetScale > 0.08 || !panels.utilities.visible ? [] : [utilsBg]
+            bottomLeftRadius: panels.utilities.visible ? Math.max(0, Math.min(1, panels.sidebar.offsetScale / 0.3)) * radius : radius
         }
 
         PanelBg {
@@ -237,6 +244,12 @@ StyledWindow {
     }
 
     // Keep dashboard transparency separate from the other drawers and its content.
+    Shortcut {
+        sequence: "Escape"
+        enabled: root.screenState.dashboard
+        onActivated: root.screenState.dashboard = false
+    }
+
     Item {
         anchors.fill: parent
         opacity: 0.72 * root.surfaceColour.a
@@ -254,11 +267,41 @@ StyledWindow {
             smoothing: root.contentItem.Config.border.smoothing
         }
 
+        // An off-screen frame gives the notch the same smooth edge attachment
+        // as the other drawers without painting a second screen border.
+        BlobInvertedRect {
+            anchors.fill: parent
+            anchors.margins: -50
+            group: notchBg.visible || dashBg.visible ? dashboardBlobGroup : null
+            radius: 0
+            borderLeft: 50
+            borderRight: 50
+            borderTop: 50
+            borderBottom: 50
+        }
+
+        BlobRect {
+            id: notchBg
+
+            group: visible ? dashboardBlobGroup : null
+            x: panels.notch.x + root.borderThickness
+            y: 0
+            width: panels.notch.width
+            // Grow the neck to bridge the taskbar when the dashboard opens.
+            height: Math.max(panels.notch.surface.height, bar.implicitHeight * (1 - panels.dashboard.offsetScale))
+            visible: panels.notch.visible && height > 0
+            radius: Math.min(12, height / 2)
+            topLeftRadius: 0
+            topRightRadius: 0
+            deformScale: 0
+        }
+
         PanelBg {
             id: dashBg
 
-            group: dashboardBlobGroup
+            group: visible ? dashboardBlobGroup : null
             panel: panels.dashboard
+            visible: panels.dashboard.visible
             deformAmount: 0.1
         }
     }

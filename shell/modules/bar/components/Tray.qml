@@ -17,7 +17,7 @@ StyledRect {
     readonly property int padding: Config.bar.tray.background ? Tokens.padding.medium : Tokens.padding.extraSmall
     readonly property int spacing: Config.bar.tray.background ? Tokens.spacing.medium : Tokens.spacing.extraSmall
 
-    property bool expanded
+    property bool expanded: false
 
     readonly property real nonAnimWidth: {
         if (!Config.bar.tray.compact)
@@ -46,6 +46,7 @@ StyledRect {
         spacing: Tokens.spacing.small
 
         opacity: root.expanded || !Config.bar.tray.compact ? 1 : 0
+        enabled: root.expanded || !Config.bar.tray.compact
 
         add: Transition {
             Anim {
@@ -96,7 +97,12 @@ StyledRect {
 
         sourceComponent: Item {
             implicitWidth: expandIconInner.implicitWidth + Tokens.padding.small
-            implicitHeight: expandIconInner.implicitHeight
+            implicitHeight: root.implicitHeight
+
+            StateLayer {
+                radius: Tokens.rounding.full
+                onClicked: root.expanded = !root.expanded
+            }
 
             MaterialIcon {
                 id: expandIconInner

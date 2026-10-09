@@ -215,8 +215,8 @@ hl.config({
 
 hl.config({
     misc = {
-        force_default_wallpaper = -1,    -- Set to 0 or 1 to disable the anime mascot wallpapers
-        disable_hyprland_logo   = false, -- If true disables the random hyprland logo / anime girl background. :(
+        disable_hyprland_logo   = true, -- Juarchy provides the desktop wallpaper.
+        disable_splash_rendering = true,
     },
 })
 
@@ -278,9 +278,11 @@ app("SUPER + SHIFT + F", "File manager", "thunar")
 app("SUPER + SHIFT + N", "Editor", "foot -e nvim")
 app("SUPER + ALT + RETURN", "Tmux", "foot -e tmux")
 app("SUPER + SHIFT + SLASH", "Passwords", "1password")
-app("SUPER + SPACE", "Desktop menu", "\"$HOME/.local/bin/jubal-launcher\"")
-app("SUPER + ALT + SPACE", "Desktop menu", "\"$HOME/.local/bin/jubal-launcher\"")
+o.bind("SUPER + SPACE", "Spotlight search", hl.dsp.global("juarchy:spotlight"))
+o.bind("SUPER + ALT + SPACE", "Desktop menu", hl.dsp.global("juarchy:menu"))
 app("SUPER + L", "Lock screen", "~/.local/bin/juarchy-shell lock lock")
+o.bind("PRINT", "Screenshot: select region", hl.dsp.exec_cmd('"$HOME/.local/bin/juarchy-screenshot"'), { release = true })
+o.bind("SHIFT + PRINT", "Screenshot: full screen", hl.dsp.exec_cmd('"$HOME/.local/bin/juarchy-screenshot" --full'), { release = true })
 -- Direct launcher sections and desktop tools
 app("SUPER + K", "Keyboard shortcut finder", "\"$HOME/.local/bin/jubal-desktop-tools\" shortcuts")
 app("SUPER + CTRL + ALT + A", "Menu: Apps", "\"$HOME/.local/bin/jubal-launcher\" --section Apps")

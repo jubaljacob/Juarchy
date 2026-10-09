@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Control Hyprsunset night light and report its actual state as JSON."""
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+
+
+def socket_path():
+    runtime = Path(os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'))
+    signature = os.environ.get('HYPRLAND_INSTANCE_SIGNATURE')
+    return runtime / 'hypr' / (signature or '') / '.hyprsunset.sock'
+
+
+def ipc(*arguments):
+    result = subprocess.run(['hyprctl', 'hyprsunset', *arguments],
+                            capture_output=True, text=True, timeout=3)
+    output = result.stdout.strip()
+    if result.returncode or output not in ('ok', 'true', 'false') and not output.isdigit():
+        raise RuntimeError(result.stderr.strip() or output or 'Could not contact Hyprsunset')
+    return output
+
+
+def status():
+    available = bool(shutil.which('hyprsunset') and shutil.which('hyprctl'))
+    if not socket_path().exists():
+        return {'available': available, 'enabled': False, 'temperature': 4500}
+    identity = ipc('identity', 'get')
+    if identity not in ('true', 'false'):
+        raise RuntimeError('Hyprsunset did not return its filter state')
+    return {'available': available, 'enabled': identity == 'false',
+            'temperature': int(ipc('temperature'))}
+
+
+def ensure_daemon():
+    if socket_path().exists():
+        ipc('identity', 'get')
+        return
+    if not shutil.which('hyprsunset'):
+        raise RuntimeError('Install hyprsunset to use Night light')
+    if not os.environ.get('WAYLAND_DISPLAY') or not os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'):
+        raise RuntimeError('Night light requires an active Hyprland desktop')
+    log_path = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'juarchy/night-light.log'
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open('ab') as log:
+        process = subprocess.Popen(['hyprsunset', '--identity'], stdin=subprocess.DEVNULL,
+                                   stdout=log, stderr=log, start_new_session=True)
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f'Hyprsunset could not start. See {log_path}')
+        if socket_path().exists():
+            try:
+                ipc('identity', 'get')
+                return
+            except RuntimeError:
+                pass
+        time.sleep(0.1)
+    process.terminate()
+    raise RuntimeError(f'Hyprsunset did not become ready. See {log_path}')
+
+
+def control(action, temperature=4500):
+    if not 1000 <= temperature <= 6500:
+        raise ValueError('Night-light temperature must be between 1000 and 6500 K')
+    current = status()
+    if action == 'status':
+        return current
+    enable = action == 'enable' or (action == 'toggle' and not current['enabled'])
+    if enable:
+        ensure_daemon()
+        ipc('temperature', str(temperature))
+    elif socket_path().exists():
+        ipc('identity')
+    return status()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=['status', 'toggle', 'enable', 'disable'], nargs='?', default='toggle')
+    parser.add_argument('--temperature', type=int, default=4500)
+    args = parser.parse_args()
+    try:
+        result = control(args.action, args.temperature)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        print(json.dumps({'error': str(error)}))
+        return 1
+    print(json.dumps(result))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

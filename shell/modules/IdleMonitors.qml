@@ -43,6 +43,11 @@ Scope {
                 root.lock.lock.locked = true;
         }
 
+        function onResumed(): void {
+            // Restore display power even if the idle monitor remains idle after sleep.
+            root.handleIdleAction("dpms on");
+        }
+
         function onLockRequested(): void {
             root.lock.lock.locked = true;
         }

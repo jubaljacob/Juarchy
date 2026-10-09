@@ -10,6 +10,7 @@ QtObject {
         // Appearance
         {
             label: Tr.tr("Wallpaper & style"),
+            id: "appearance",
             icon: "palette",
             description: Tr.tr("Wallpaper, fonts, colours"),
             category: "appearance"
@@ -25,12 +26,14 @@ QtObject {
         // },
         {
             label: Tr.tr("Network"),
+            id: "network",
             icon: "wifi",
             description: Tr.tr("Wi-Fi, ethernet, VPN"),
             category: "connectivity"
         },
         {
             label: Tr.tr("Connected devices"),
+            id: "bluetooth",
             icon: "devices_other",
             description: Tr.tr("Bluetooth, pairing"),
             category: "connectivity",
@@ -38,6 +41,7 @@ QtObject {
         },
         {
             label: Tr.tr("Audio"),
+            id: "audio",
             icon: "volume_up",
             description: Tr.tr("App volumes, sound devices"),
             category: "connectivity"
@@ -46,12 +50,14 @@ QtObject {
         // System
         {
             label: Tr.tr("Updates"),
+            id: "updates",
             icon: "update",
             description: Tr.tr("System updates"),
             category: "system"
         },
         {
             label: Tr.tr("Plugins"),
+            id: "plugins",
             icon: "extension",
             description: Tr.tr("Manage plugins"),
             category: "system"
@@ -60,24 +66,28 @@ QtObject {
         // Shell
         {
             label: Tr.tr("Panels"),
+            id: "panels",
             icon: "dock_to_bottom",
             description: Tr.tr("Dashboard, taskbar, launcher, sidebar"),
             category: "shell"
         },
         {
             label: Tr.tr("Apps"),
+            id: "apps",
             icon: "apps",
             description: Tr.tr("Default apps, favourites, hidden apps"),
             category: "shell"
         },
         {
             label: Tr.tr("Services"),
+            id: "services",
             icon: "build",
             description: Tr.tr("Poll intervals, lyrics backend"),
             category: "shell"
         },
         {
             label: Tr.tr("Language & region"),
+            id: "region",
             icon: "globe",
             description: Tr.tr("UI language, weather location, display units"),
             category: "shell"
@@ -86,6 +96,7 @@ QtObject {
         // About
         {
             label: Tr.tr("About"),
+            id: "about",
             icon: "info",
             description: Tr.tr("System information, credits"),
             category: "about"

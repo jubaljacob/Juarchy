@@ -7,9 +7,11 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('notification_history', ROOT / 'home/.local/bin/juarchy-notification-history')
 from importlib.machinery import SourceFileLoader
-helper = SourceFileLoader('notification_history', str(ROOT / 'home/.local/bin/juarchy-notification-history')).load_module()
+loader = SourceFileLoader('notification_history', str(ROOT / 'home/.local/bin/juarchy-notification-history'))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+helper = importlib.util.module_from_spec(spec)
+loader.exec_module(helper)
 
 
 class PrivacyHistoryTests(unittest.TestCase):

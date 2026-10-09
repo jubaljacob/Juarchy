@@ -99,8 +99,8 @@ class ActivationTests(unittest.TestCase):
         actions = [item['command'] for item in migrated['items']]
         self.assertEqual(actions[:3], [['~/.local/bin/juarchy-shell', 'lock', 'lock'],
                                       ['~/.local/bin/juarchy-shell', 'nexus', 'open'],
-                                      ['qs', '-c', 'juarchy', 'ipc', 'call', 'picker', 'open']])
-        self.assertEqual(actions[3:], commands[3:])
+                                      ['~/.local/bin/juarchy-screenshot']])
+        self.assertEqual(actions[3:], [['~/.local/bin/juarchy-screenshot', '--full'], commands[4]])
 
 
 if __name__ == '__main__':

@@ -1,0 +1,978 @@
+#!/usr/bin/env python3
+"""Spotlight contextual search, calculations, units and currency (stdlib only)."""
+import argparse
+import ast
+from contextlib import closing
+from datetime import date
+import fcntl
+import html
+import heapq
+import json
+import math
+import operator
+import os
+from pathlib import Path
+import re
+import queue
+import threading
+import sqlite3
+import socket
+import subprocess
+import tempfile
+import time
+from urllib.parse import urlencode, quote
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+
+CACHE = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'juarchy/spotlight'
+CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'juarchy/spotlight.json'
+IGNORE = {'node_modules', 'target', 'build', 'dist', '__pycache__', 'vendor', '.git',
+          'venv', 'site-packages', 'CMakeFiles', 'cache', 'caches', 'backup', 'backups'}
+DEFAULT_ROOTS = ['Desktop', 'Documents', 'Downloads', 'Pictures', 'Videos', 'Music', 'Projects']
+INDEX_VERSION = 2
+INDEX_LIMIT = 150000
+PERSONAL_TYPES = {
+    'pdf': 'PDF', 'doc': 'Document', 'docx': 'Document', 'odt': 'Document',
+    'rtf': 'Document', 'txt': 'Text', 'md': 'Markdown', 'org': 'Notes',
+    'xls': 'Spreadsheet', 'xlsx': 'Spreadsheet', 'ods': 'Spreadsheet', 'csv': 'CSV',
+    'ppt': 'Presentation', 'pptx': 'Presentation', 'odp': 'Presentation',
+    **dict.fromkeys(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'heic', 'tif', 'tiff'], 'Image'),
+    **dict.fromkeys(['mp4', 'mkv', 'webm', 'mov', 'avi'], 'Video'),
+    **dict.fromkeys(['mp3', 'flac', 'wav', 'ogg', 'm4a', 'opus'], 'Audio'),
+    'epub': 'Book', 'ics': 'Calendar',
+}
+
+
+def normalise(text):
+    # Word boundaries include punctuation, underscores and camelCase.
+    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
+    return ' '.join(re.findall(r'[^\W_]+', text.casefold()))
+
+
+def file_score(name, query, broad):
+    full, stem, needle = normalise(name), normalise(Path(name).stem), normalise(query)
+    if not needle:
+        return 0
+    if full == needle:
+        return 1000
+    if stem == needle:
+        return 950
+    words, terms = full.split(), needle.split()
+    if all(term in words for term in terms):
+        return 900 if (' ' + needle + ' ') in (' ' + full + ' ') else 850
+    if len(needle) < 3:
+        return 0
+    if all(any(word.startswith(term) for word in words) for term in terms):
+        return 750
+    return 400 if broad and all(term in full for term in terms) else 0
+
+
+def settings():
+    try:
+        data = json.loads(CONFIG.read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def row(title, detail='', kind='copy', value=None):
+    return {'title': title, 'detail': detail, 'kind': kind, 'value': title if value is None else value}
+
+
+def atomic_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as out:
+        json.dump(data, out)
+    os.replace(out.name, path)
+
+
+def index_files(force=False):
+    CACHE.mkdir(parents=True, exist_ok=True)
+    with (CACHE / 'index.lock').open('w') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        database = CACHE / 'files.sqlite'
+        if not force and database.exists() and time.time() - database.stat().st_mtime < 600:
+            with closing(sqlite3.connect(database)) as db:
+                if db.execute('PRAGMA user_version').fetchone()[0] == INDEX_VERSION:
+                    return False
+        config = settings()
+        roots = config.get('roots', [str(Path.home() / name) for name in DEFAULT_ROOTS])
+        if not isinstance(roots, list) or not all(isinstance(r, str) for r in roots):
+            raise ValueError('roots must be a list of directory paths')
+        exclude_dirs = config.get('exclude_dirs', [])
+        exclude_names = config.get('exclude_names', [])
+        if not all(isinstance(items, list) and all(isinstance(item, str) for item in items)
+                   for items in (exclude_dirs, exclude_names)):
+            raise ValueError('exclude_dirs and exclude_names must be lists of strings')
+        excluded = [Path(p).expanduser().absolute() for p in exclude_dirs]
+        ignore = {name.casefold() for name in IGNORE | set(exclude_names)}
+
+        def excluded_path(path):
+            return any(path == base or base in path.parents for base in excluded)
+        fd, temporary = tempfile.mkstemp(dir=CACHE, suffix='.sqlite')
+        os.close(fd)
+        try:
+            with closing(sqlite3.connect(temporary)) as db, db:
+                db.execute('CREATE TABLE files(path TEXT PRIMARY KEY, name TEXT, folded TEXT, folder INTEGER, words TEXT, modified REAL)')
+                db.execute(f'PRAGMA user_version = {INDEX_VERSION}')
+                count = 0
+                for base in roots:
+                    base = Path(base).expanduser()
+                    if not base.is_absolute() or not base.is_dir() or base.is_symlink() or excluded_path(base):
+                        continue
+                    for parent, directories, files in os.walk(base, followlinks=False):
+                        directories[:] = sorted(d for d in directories if not d.startswith('.')
+                                                and d.casefold() not in ignore
+                                                and not (Path(parent) / d).is_symlink()
+                                                and not excluded_path(Path(parent) / d))
+                        for name in directories + sorted(files):
+                            path = Path(parent) / name
+                            if name.startswith('.') or path.is_symlink():
+                                continue
+                            if excluded_path(path):
+                                continue
+                            try:
+                                modified = path.stat().st_mtime
+                            except OSError:
+                                continue
+                            db.execute('INSERT OR IGNORE INTO files VALUES(?,?,?,?,?,?)',
+                                       (str(path), name, name.casefold(), int(path.is_dir()), normalise(name), modified))
+                            count += 1
+                            if count >= INDEX_LIMIT:
+                                break
+                        if count >= INDEX_LIMIT:
+                            break
+                    if count >= INDEX_LIMIT:
+                        break
+            os.replace(temporary, database)
+            return True
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+
+
+def files(query, broad=True):
+    database = CACHE / 'files.sqlite'
+    if not database.exists():
+        return [], 'Building the file index…'
+    terms = normalise(query).split()
+    if not terms:
+        return [], 'Search filenames in your personal folders and Projects'
+    escape = lambda s: s.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    where = ' AND '.join("words LIKE ? ESCAPE '\\'" for _ in terms)
+    parameters = [f'%{escape(t)}%' for t in terms]
+    # Percent signs remain literal, never SQL wildcards.
+    if '%' in query:
+        where += " AND folded LIKE ? ESCAPE '\\'"
+        parameters.append(f'%{escape(query.casefold())}%')
+    explicit_type = bool(Path(query).suffix)
+    def candidates(cursor):
+        for path, name, folder, modified in cursor:
+            suffix = Path(name).suffix[1:].casefold()
+            if not broad and not folder and suffix not in PERSONAL_TYPES and not explicit_type:
+                continue
+            score = file_score(name, query, broad)
+            if not score:
+                continue
+            # Project internals remain searchable in Files; personal documents lead All.
+            internal = any(part.casefold() in {'src', 'tests', 'assets', 'reference', 'examples', 'archives'}
+                           for part in Path(path).parent.parts)
+            if not broad and internal and not explicit_type and score < 950:
+                continue
+            if not Path(path).exists():
+                continue
+            yield (-score, internal, -modified, len(name), name.casefold(), path, name, folder, suffix)
+    with closing(sqlite3.connect(f'file:{quote(str(database))}?mode=ro', uri=True)) as db:
+        if db.execute('PRAGMA user_version').fetchone()[0] != INDEX_VERSION:
+            return [], 'Updating the file index…'
+        cursor = db.execute(f'SELECT path,name,folder,modified FROM files WHERE {where}', parameters)
+        matches = heapq.nsmallest(40, candidates(cursor))
+    results = []
+    for negative_score, _, _, _, _, path, name, folder, suffix in matches:
+        kind = 'Folder' if folder else PERSONAL_TYPES.get(suffix, suffix.upper() + ' file' if suffix else 'File')
+        detail = kind + ' · ' + str(Path(path).parent).replace(str(Path.home()), '~', 1)
+        result = row(name, detail, 'file', path)
+        result.update(score=-negative_score, icon='folder' if folder else {
+            'Image': 'image', 'Video': 'movie', 'Audio': 'audio_file', 'PDF': 'picture_as_pdf',
+            'Spreadsheet': 'table_chart', 'Presentation': 'slideshow',
+        }.get(kind, 'description'))
+        results.append(result)
+    return results, 'File names • Ctrl + Enter opens the containing folder'
+
+
+OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod, ast.Pow: operator.pow}
+FUNCS = {'sqrt': math.sqrt, 'sin': math.sin, 'cos': math.cos, 'tan': math.tan, 'log': math.log10, 'ln': math.log, 'abs': abs, 'round': round}
+
+
+def calculate(expression):
+    tree = ast.parse(expression.replace('^', '**').replace('×', '*').replace('÷', '/'), mode='eval')
+    if len(list(ast.walk(tree))) > 80:
+        raise ValueError('Expression too long')
+    def visit(node):
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            value = node.value
+        elif isinstance(node, ast.Name) and node.id in ('pi', 'e'):
+            value = getattr(math, node.id)
+        elif isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            value = visit(node.operand) * (-1 if isinstance(node.op, ast.USub) else 1)
+        elif isinstance(node, ast.BinOp) and type(node.op) in OPS:
+            a, b = visit(node.left), visit(node.right)
+            if isinstance(node.op, ast.Pow) and abs(b) > 100:
+                raise ValueError('Exponent too large')
+            value = OPS[type(node.op)](a, b)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in FUNCS and not node.keywords and len(node.args) in (1, 2):
+            value = FUNCS[node.func.id](*(visit(arg) for arg in node.args))
+        else:
+            raise ValueError('Unsupported expression')
+        if not isinstance(value, (int, float)) or not math.isfinite(value) or abs(value) > 1e100:
+            raise ValueError('Result outside supported range')
+        return value
+    return visit(tree.body)
+
+
+# Dimensions: length, mass, time, information, angle, electric current.
+# Definitions follow SI/NIST SP 811. US and imperial volumes are explicit.
+UNITS = {}
+UNIT_NAMES = {}
+
+
+def add_unit(symbol, dimensions, factor=1, names=''):
+    UNITS[symbol] = (dimensions, factor)
+    for name in names.split('|'):
+        if name:
+            UNIT_NAMES[name.casefold()] = symbol
+            UNIT_NAMES[(name + 's').casefold()] = symbol
+
+
+L, M, T, D, A, I = [(tuple(int(i == j) for i in range(6))) for j in range(6)]
+ZERO = (0,) * 6
+
+
+def dimensions(*powers):
+    return tuple(sum(dim[i] * exponent for dim, exponent in powers) for i in range(6))
+
+
+for symbol, dim, factor, names in [
+    ('m', L, 1, 'metre|meter'), ('g', M, .001, 'gram'),
+    ('s', T, 1, 'second|sec'), ('min', T, 60, 'minute'),
+    ('h', T, 3600, 'hour|hr'), ('day', T, 86400, 'day'), ('week', T, 604800, 'week'),
+    ('in', L, .0254, 'inch|inches'), ('ft', L, .3048, 'foot|feet'),
+    ('yd', L, .9144, 'yard'), ('mi', L, 1609.344, 'mile'), ('nmi', L, 1852, 'nautical mile'),
+    ('oz', M, .028349523125, 'ounce'), ('lb', M, .45359237, 'pound|lbs'),
+    ('st', M, 6.35029318, 'stone'), ('t', M, 1000, 'tonne|metric ton'),
+    ('US ton', M, 907.18474, 'short ton'), ('imperial ton', M, 1016.0469088, 'long ton'),
+    ('L', dimensions((L, 3)), .001, 'litre|liter|l'),
+    ('ha', dimensions((L, 2)), 10000, 'hectare'),
+    ('acre', dimensions((L, 2)), 4046.8564224, 'acre'),
+    ('US gal', dimensions((L, 3)), .003785411784, 'US gallon'),
+    ('imperial gal', dimensions((L, 3)), .00454609, 'imperial gallon|UK gallon|UK gal'),
+    ('US pint', dimensions((L, 3)), .000473176473, 'US pint'),
+    ('imperial pint', dimensions((L, 3)), .00056826125, 'imperial pint|UK pint'),
+    ('US fl oz', dimensions((L, 3)), .0000295735295625, 'US fluid ounce'),
+    ('imperial fl oz', dimensions((L, 3)), .0000284130625, 'imperial fluid ounce|UK fl oz'),
+    ('US cup', dimensions((L, 3)), .0002365882365, 'US cup'),
+    ('metric cup', dimensions((L, 3)), .00025, 'metric cup'),
+    ('US tbsp', dimensions((L, 3)), .00001478676478125, 'US tablespoon'),
+    ('US tsp', dimensions((L, 3)), .00000492892159375, 'US teaspoon'),
+    ('mph', dimensions((L, 1), (T, -1)), .44704, 'miles per hour'),
+    ('kph', dimensions((L, 1), (T, -1)), 1 / 3.6, 'kilometres per hour|kilometers per hour'),
+    ('knot', dimensions((L, 1), (T, -1)), 1852 / 3600, 'knot|kn'),
+    ('Hz', dimensions((T, -1)), 1, 'hertz'),
+    ('N', dimensions((L, 1), (M, 1), (T, -2)), 1, 'newton'),
+    ('lbf', dimensions((L, 1), (M, 1), (T, -2)), 4.4482216152605, 'pound force|pound-force'),
+    ('Pa', dimensions((L, -1), (M, 1), (T, -2)), 1, 'pascal'),
+    ('bar', dimensions((L, -1), (M, 1), (T, -2)), 100000, 'bar'),
+    ('atm', dimensions((L, -1), (M, 1), (T, -2)), 101325, 'atmosphere'),
+    ('psi', dimensions((L, -1), (M, 1), (T, -2)), 6894.757293168, 'psi'),
+    ('J', dimensions((L, 2), (M, 1), (T, -2)), 1, 'joule'),
+    ('Wh', dimensions((L, 2), (M, 1), (T, -2)), 3600, 'watt hour|watt-hour'),
+    ('cal', dimensions((L, 2), (M, 1), (T, -2)), 4.184, 'calorie'),
+    ('kcal', dimensions((L, 2), (M, 1), (T, -2)), 4184, 'kilocalorie|food calorie'),
+    ('eV', dimensions((L, 2), (M, 1), (T, -2)), 1.602176634e-19, 'electronvolt'),
+    ('W', dimensions((L, 2), (M, 1), (T, -3)), 1, 'watt'),
+    ('hp', dimensions((L, 2), (M, 1), (T, -3)), 745.6998715822702, 'mechanical horsepower|horsepower'),
+    ('rad', A, 1, 'radian'), ('deg', A, math.pi / 180, 'degree|°'),
+    ('turn', A, math.tau, 'turn|revolution'),
+    ('B', D, 1, 'byte'), ('b', D, .125, 'bit'),
+    ('A', I, 1, 'ampere|amp'),
+    ('C', dimensions((I, 1), (T, 1)), 1, 'coulomb'),
+    ('V', dimensions((L, 2), (M, 1), (T, -3), (I, -1)), 1, 'volt'),
+    ('F', dimensions((L, -2), (M, -1), (T, 4), (I, 2)), 1, 'farad'),
+    ('H', dimensions((L, 2), (M, 1), (T, -2), (I, -2)), 1, 'henry|henries'),
+    ('ohm', dimensions((L, 2), (M, 1), (T, -3), (I, -2)), 1, 'ohm|Ω'),
+]:
+    add_unit(symbol, dim, factor, names)
+
+for prefix, name, factor in [
+    ('n', 'nano', 1e-9), ('u', 'micro', 1e-6), ('m', 'milli', .001),
+    ('c', 'centi', .01), ('d', 'deci', .1), ('k', 'kilo', 1e3),
+    ('M', 'mega', 1e6), ('G', 'giga', 1e9), ('T', 'tera', 1e12), ('P', 'peta', 1e15),
+]:
+    for base, names in {'m': 'metre|meter', 'g': 'gram', 's': 'second', 'L': 'litre|liter',
+                        'Hz': 'hertz', 'N': 'newton', 'Pa': 'pascal', 'J': 'joule',
+                        'W': 'watt', 'Wh': 'watt hour|watt-hour', 'A': 'ampere', 'V': 'volt',
+                        'ohm': 'ohm', 'F': 'farad', 'H': 'henry', 'B': 'byte', 'b': 'bit'}.items():
+        dim, scale = UNITS[base]
+        add_unit(prefix + base, dim, factor * scale, '|'.join(name + alias for alias in names.split('|')))
+        if prefix == 'u':
+            UNITS['µ' + base] = UNITS['μ' + base] = UNITS[prefix + base]
+for prefix, name, exponent in [('Ki', 'kibi', 1), ('Mi', 'mebi', 2), ('Gi', 'gibi', 3),
+                               ('Ti', 'tebi', 4), ('Pi', 'pebi', 5)]:
+    for base, word in [('B', 'byte'), ('b', 'bit')]:
+        add_unit(prefix + base, D, 1024 ** exponent * UNITS[base][1], name + word)
+# Familiar spelling of decimal bytes. Lowercase b still means bits.
+for prefix in ('K',):
+    UNITS[prefix + 'B'] = UNITS['kB']
+    UNITS[prefix + 'b'] = UNITS['kb']
+UNITS['ml'] = UNITS['mL']
+for symbol, value in list(UNITS.items()):
+    if value[0] == D:
+        add_unit(symbol + 'ps', dimensions((D, 1), (T, -1)), value[1], '')
+UNITS['cc'] = (dimensions((L, 3)), 1e-6)
+
+TEMPERATURE = {
+    'c': (1, 273.15), 'celsius': (1, 273.15), 'centigrade': (1, 273.15),
+    'f': (5 / 9, 459.67 * 5 / 9), 'fahrenheit': (5 / 9, 459.67 * 5 / 9),
+    'k': (1, 0), 'kelvin': (1, 0), 'r': (5 / 9, 0), 'rankine': (5 / 9, 0),
+}
+AMBIGUOUS = {'gal', 'gallon', 'gallons', 'pint', 'pints', 'cup', 'cups', 'fl oz',
+             'fluid ounce', 'fluid ounces', 'tsp', 'tbsp', 'ton', 'tons'}
+NUMBER = r'[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?(?:[eE][-+]?\d+)?|[-+]?\.\d+(?:[eE][-+]?\d+)?'
+
+
+def conversion(query):
+    query = re.sub(r'^\s*convert\s+', '', query, flags=re.I)
+    match = re.fullmatch(r'\s*(' + NUMBER + r')\s*(.+?)\s+(?:to|in|into|as|=|→)\s+(.+?)\s*', query, re.I)
+    return match.groups() if match else None
+
+
+def atom(text):
+    text = text.strip()
+    if text in UNITS:
+        return UNITS[text]
+    if text.casefold() in UNIT_NAMES:
+        return UNITS[UNIT_NAMES[text.casefold()]]
+    raise ValueError('Unknown unit: ' + text)
+
+
+def unit_expression(text):
+    text = text.strip().replace('²', '^2').replace('³', '^3').replace('·', '*').replace('×', '*')
+    try:
+        return atom(text)
+    except ValueError:
+        pass
+    text = re.sub(r'\b(?:sq\.?|square)\s+([\wµμ]+)', r'\1^2', text, flags=re.I)
+    text = re.sub(r'\b(?:cu\.?|cubic)\s+([\wµμ]+)', r'\1^3', text, flags=re.I)
+    text = re.sub(r'\bper\b', '/', text, flags=re.I)
+    parts = text.split('/')
+    if len(parts) > 2 or not all(part.strip() for part in parts):
+        raise ValueError('Use one / for a compound unit')
+    dim, factor, count = ZERO, 1, 0
+    for index, part in enumerate(parts):
+        try:
+            atoms = [(atom(part), 1)]
+        except ValueError:
+            atoms = []
+            for token in re.split(r'[\s*]+', part.strip()):
+                match = re.fullmatch(r'([^\d^]+?)(?:\^?(-?\d+))?', token)
+                if not match:
+                    raise ValueError('Unknown unit: ' + token)
+                power = int(match[2] or 1)
+                if abs(power) > 6:
+                    raise ValueError('Unit power must be between -6 and 6')
+                atoms.append((atom(match[1]), power))
+        for (unit_dim, unit_factor), power in atoms:
+            count += 1
+            if count > 6:
+                raise ValueError('Unit expression too long')
+            power *= -1 if index else 1
+            dim = dimensions((dim, 1), (unit_dim, power))
+            factor *= unit_factor ** power
+    return dim, factor
+
+
+def temperature(text):
+    return TEMPERATURE.get(re.sub(r'^(?:degrees?\s+|°\s*)', '', text.strip(), flags=re.I).casefold())
+
+
+def unit_value(amount, source, target):
+    value = float(amount.replace(',', ''))
+    if not math.isfinite(value):
+        raise ValueError('Amount is outside the supported range')
+    if source.casefold() in AMBIGUOUS or target.casefold() in AMBIGUOUS:
+        raise ValueError('Specify US or imperial units, or use metric cup / tonne')
+    a, b = temperature(source), temperature(target)
+    # C/F/K/R together mean temperature; compound/electrical targets resolve C/F as SI symbols.
+    if a and b:
+        kelvin = value * a[0] + a[1]
+        if kelvin < -1e-9:
+            raise ValueError('Temperature is below absolute zero')
+        answer = (kelvin - b[1]) / b[0]
+    else:
+        source_dim, source_factor = unit_expression(source)
+        target_dim, target_factor = unit_expression(target)
+        if source_dim != target_dim:
+            raise ValueError('These units measure different quantities')
+        answer = value * source_factor / target_factor
+    if not math.isfinite(answer) or abs(answer) > 1e100:
+        raise ValueError('Result is outside the supported range')
+    return 0 if abs(answer) < 1e-12 and a and b else answer
+
+
+def local(query):
+    match = conversion(query)
+    if match:
+        try:
+            value = unit_value(*match)
+            amount, source, target = match
+            return [row(f'{value:,.10g} {target}', f'{amount} {source} → {target} • Enter copies', value=f'{value:.10g}')]
+        except (ValueError, ArithmeticError):
+            return []
+    try:
+        if query.strip() and (re.search(r'\d', query) or query.strip() in ('pi', 'e')):
+            value = calculate(query.strip().lstrip('=').strip())
+            return [row(f'{value:,.12g}', 'Calculation • Enter copies the answer', value=f'{value:.12g}')]
+    except (ValueError, SyntaxError, ArithmeticError, TypeError, OverflowError):
+        pass
+    return []
+
+def fetch(url, timeout=5):
+    with urlopen(Request(url, headers={'User-Agent': 'JuarchySpotlight/1.0 (desktop search)', 'Accept': 'application/json'}), timeout=timeout) as response:
+        return json.loads(response.read(2_000_000))
+
+
+RATE_SNAPSHOT = None
+RATE_TTL = 86400
+RATE_TIMEOUT = 2
+RATE_DEADLINE = 3
+RATE_HEDGE_DELAY = .35
+RATE_COOLDOWN = 300
+WEB_TIMEOUT = 2
+WEB_DEADLINE = 2.5
+WEB_COOLDOWN = 30
+RATE_PROVIDERS = [
+    ('cdn', 'Currency API · jsDelivr', 'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/eur.min.json'),
+    ('frankfurter', 'Frankfurter', 'https://api.frankfurter.dev/v2/rates?base=EUR'),
+    ('cloudflare', 'Currency API · Cloudflare', 'https://latest.currency-api.pages.dev/v1/currencies/eur.min.json'),
+]
+
+
+def rate_number(value):
+    if isinstance(value, bool):
+        raise ValueError('Invalid exchange rate')
+    rate = float(value)
+    if not math.isfinite(rate) or rate <= 0:
+        raise ValueError('Invalid exchange rate')
+    return rate
+
+
+def read_json(path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def save_cache(path, data):
+    # Optional cache writes must not hide a valid result.
+    try:
+        atomic_json(path, data)
+    except OSError:
+        pass
+
+
+def cached_rate(path):
+    try:
+        cached = read_json(path)
+        cached['rate'] = rate_number(cached['rate'])
+        cached['fetched'] = float(cached['fetched'])
+        if not math.isfinite(cached['fetched']):
+            return None
+        date.fromisoformat(cached['date'])
+        return cached
+    except (ValueError, KeyError, TypeError, OverflowError):
+        return None
+
+
+def valid_snapshot(data):
+    if not isinstance(data, dict) or not isinstance(data.get('rates'), dict):
+        raise ValueError('Invalid rate table')
+    date.fromisoformat(data['date'])
+    if not math.isfinite(float(data['fetched'])):
+        raise ValueError('Invalid cache timestamp')
+    if not math.isclose(rate_number(data['rates'][data['base'].lower()]), 1):
+        raise ValueError('Invalid base currency')
+    return data
+
+
+def shared_rates():
+    if RATE_SNAPSHOT is not None:
+        return RATE_SNAPSHOT
+    candidates = [CACHE / 'rates-shared.json']
+    # Older installations already cached complete tables for individual bases.
+    # Promote one locally so the speed improvement takes effect immediately.
+    candidates.extend(sorted(CACHE.glob('rates-*-daily.json'), key=lambda path: path.stat().st_mtime, reverse=True))
+    for path in candidates:
+        try:
+            snapshot = valid_snapshot(read_json(path))
+            if path.name != 'rates-shared.json':
+                save_cache(CACHE / 'rates-shared.json', snapshot)
+            return snapshot
+        except (ValueError, KeyError, TypeError, AttributeError, OverflowError):
+            continue
+    return None
+
+
+def snapshot_pair(snapshot, source, target):
+    rate = rate_number(snapshot['rates'][target.lower()]) / rate_number(snapshot['rates'][source.lower()])
+    dates = snapshot.get('dates', {})
+    observed = min(dates.get(source.lower(), snapshot['date']), dates.get(target.lower(), snapshot['date']))
+    date.fromisoformat(observed)
+    return {'rate': rate_number(rate), 'date': observed, 'fetched': float(snapshot['fetched']),
+            'provider': snapshot.get('provider', 'Currency API')}
+
+
+def available_rate(source, target):
+    # A single table serves every source/target pair by dividing their rates.
+    snapshot = shared_rates()
+    if snapshot:
+        try:
+            return snapshot_pair(snapshot, source, target), True
+        except (KeyError, ValueError, TypeError, OverflowError):
+            pass
+    # Preserve previous installs' caches; promote old base tables to shared use.
+    legacy = read_json(CACHE / f'rates-{source}-daily.json')
+    try:
+        pair = snapshot_pair(valid_snapshot(legacy), source, target)
+        return pair, False
+    except (KeyError, ValueError, TypeError, AttributeError, OverflowError):
+        pass
+    return cached_rate(CACHE / f'rate-{source}-{target}.json'), False
+
+
+def cooling_down(until):
+    try:
+        until = float(until)
+        return math.isfinite(until) and until > time.time()
+    except (ValueError, TypeError, OverflowError):
+        return False
+
+
+def refresh_state(source, target):
+    state = read_json(CACHE / 'rates-refresh-state.json') or {}
+    if not isinstance(state, dict):
+        return {}
+    key = source + '-' + target
+    state_pair = state.get('pairs', {}).get(key, {}) if isinstance(state.get('pairs'), dict) else {}
+    if isinstance(state_pair, dict) and cooling_down(state_pair.get('until', 0)):
+        return state_pair
+    if cooling_down(state.get('until', 0)):
+        return state
+    return {}
+
+
+def normalise_snapshot(data, provider):
+    if provider == 'frankfurter':
+        if not isinstance(data, list) or not data:
+            raise ValueError('Invalid rate table')
+        rates, dates = {'eur': 1}, {}
+        for entry in data:
+            if entry['base'].upper() != 'EUR' or not re.fullmatch(r'[A-Za-z]{3}', entry['quote']):
+                raise ValueError('Invalid currency in rate table')
+            code = entry['quote'].lower()
+            date.fromisoformat(entry['date'])
+            rates[code], dates[code] = rate_number(entry['rate']), entry['date']
+        observed = max(dates.values())
+    else:
+        date.fromisoformat(data['date'])
+        observed, rates, dates = data['date'], data['eur'], {}
+        if not isinstance(rates, dict):
+            raise ValueError('Invalid rate table')
+        rates = {code: rate_number(value) for code, value in rates.items()}
+    snapshot = {'base': 'EUR', 'rates': rates, 'dates': dates, 'date': observed,
+                'fetched': time.time(), 'provider': dict((key, name) for key, name, _ in RATE_PROVIDERS)[provider]}
+    return valid_snapshot(snapshot)
+
+
+def failure_message(failures, source, target):
+    if any(isinstance(getattr(error, 'reason', None), socket.gaierror) for error in failures):
+        return 'Cannot reach rate services: DNS lookup failed. Check your connection.'
+    if any(isinstance(error, (TimeoutError, URLError)) and not isinstance(error, HTTPError) for error in failures):
+        return 'Cannot reach rate services. Check your connection and try again.'
+    if any(isinstance(error, HTTPError) and error.code in (404, 422) or isinstance(error, KeyError) for error in failures):
+        return f'No current rate available for {source} → {target}. Check the currency codes.'
+    return 'Rate services are unavailable or returned invalid data. Try again shortly.'
+
+
+def refresh_rates(source, target):
+    """Race a delayed fallback against a slow provider, within one overall deadline."""
+    global RATE_SNAPSHOT
+    CACHE.mkdir(parents=True, exist_ok=True)
+    with (CACHE / 'rates-refresh.lock').open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return 'Rates are updating in another search. Try again shortly.'
+        state = refresh_state(source, target)
+        if state:
+            return state.get('error', 'Rate services are temporarily unavailable.')
+        health = read_json(CACHE / 'rates-provider-health.json') or {}
+        if not isinstance(health, dict):
+            health = {}
+        providers = [item for item in RATE_PROVIDERS if not cooling_down(health.get(item[0], 0))]
+        results = queue.Queue()
+        failures, started = [], set()
+        deadline = time.monotonic() + RATE_DEADLINE
+        next_start = time.monotonic()
+
+        def download(key, name, url):
+            try:
+                snapshot = normalise_snapshot(fetch(url, timeout=RATE_TIMEOUT), key)
+                results.put((key, snapshot, None))
+            except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError) as error:
+                results.put((key, None, error))
+
+        while providers or started:
+            now = time.monotonic()
+            if now >= deadline:
+                failures.append(TimeoutError('Currency lookup deadline exceeded'))
+                for key in started:
+                    health[key] = time.time() + RATE_COOLDOWN
+                break
+            if providers and (now >= next_start or not started):
+                item = providers.pop(0)
+                started.add(item[0])
+                threading.Thread(target=download, args=item, daemon=True).start()
+                next_start = now + RATE_HEDGE_DELAY
+            wait_for = min(deadline - now, max(next_start - now, .001) if providers else deadline - now)
+            try:
+                key, snapshot, error = results.get(timeout=wait_for)
+            except queue.Empty:
+                continue
+            started.remove(key)
+            if error:
+                failures.append(error)
+                health[key] = time.time() + RATE_COOLDOWN
+                next_start = time.monotonic()  # Failure gets an immediate fallback.
+                continue
+            health.pop(key, None)
+            try:
+                snapshot_pair(snapshot, source, target)
+            except (KeyError, ValueError, TypeError, OverflowError) as error:
+                failures.append(error)
+                # The provider is healthy but does not cover this pair; try another.
+                continue
+            RATE_SNAPSHOT = snapshot
+            save_cache(CACHE / 'rates-shared.json', snapshot)
+            save_cache(CACHE / 'rates-provider-health.json', health)
+            save_cache(CACHE / 'rates-refresh-state.json', {})
+            return ''
+        message = failure_message(failures, source, target)
+        save_cache(CACHE / 'rates-provider-health.json', health)
+        unsupported = failures and all(isinstance(error, KeyError) for error in failures)
+        if unsupported:
+            state = read_json(CACHE / 'rates-refresh-state.json') or {}
+            pairs = state.get('pairs', {}) if isinstance(state, dict) else {}
+            if not isinstance(pairs, dict):
+                pairs = {}
+            pairs[source + '-' + target] = {'until': time.time() + RATE_COOLDOWN, 'error': message}
+            save_cache(CACHE / 'rates-refresh-state.json', {'pairs': pairs})
+        else:
+            save_cache(CACHE / 'rates-refresh-state.json', {'until': time.time() + RATE_COOLDOWN, 'error': message})
+        return message
+
+
+def currency(query, allow_network=True):
+    match = currency_match(query)
+    if not match:
+        return [], 'Try 600gbp to aed, 100 USD to EUR'
+    amount, source, target = match
+    if not math.isfinite(float(amount)) or abs(float(amount)) > 1e100:
+        return [], 'Amount is outside the supported range'
+    if source == target:
+        return [row(f'{float(amount):,.2f} {target}', 'Same currency', value=f'{float(amount):.2f}')], ''
+    cached, shared = available_rate(source, target)
+    stale = bool(cached and time.time() - cached['fetched'] >= RATE_TTL)
+    needs_refresh = not cached or stale or not shared
+    state = refresh_state(source, target) if needs_refresh else {}
+    if not cached and allow_network and not state:
+        error = refresh_rates(source, target)
+        cached, shared = available_rate(source, target)
+        state = {'error': error} if error else {}
+        needs_refresh = False
+    if not cached:
+        if state:
+            return [], state.get('error', 'Rates unavailable. Try again shortly.')
+        result = row('Getting currency rates…', 'Downloading rates for local conversions', 'info')
+        result['refreshRates'] = True
+        return [result], 'Getting currency rates…'
+    value = float(amount) * cached['rate']
+    if not math.isfinite(value) or abs(value) > 1e100:
+        return [], 'Amount is outside the supported range'
+    label = ' • offline cached rate' if stale and state else ' • cached rate' if stale else ''
+    result = row(f'{value:,.2f} {target}', f"{amount} {source} • {cached.get('provider', 'Frankfurter')} • {cached['date']}" + label, value=f'{value:.2f}')
+    result['refreshRates'] = bool(needs_refresh and not state)
+    status = 'Cached rate • refreshing…' if result['refreshRates'] else 'Refresh unavailable • cached rate' if stale and state else 'Daily reference rates • Enter copies the answer'
+    return [result], status
+
+
+def web_query(query):
+    return bool(re.match(r'^(?:what|who|where|when|why|how|which|is|are|can|does|do)\s+\S+|^(?:tell me about|define|definition of|search for|look up)\s+\S+', query, re.I) or query.endswith('?'))
+
+
+def web_terms(query):
+    terms = re.sub(r'^(?:what (?:is|are)|who (?:is|was)|tell me about|define|definition of|search for|look up)\s+(?:(?:a|an|the)\s+)?', '', query, flags=re.I).rstrip(' ?')
+    return terms or query
+
+
+def plain_text(text, limit):
+    # API extracts are requested as plain text; clean unexpected markup as well.
+    return re.sub(r'\s+', ' ', html.unescape(re.sub(r'<[^>]*>', '', str(text or '')))).strip()[:limit]
+
+
+def fetch_web(url):
+    """Bound the whole lookup, including slow DNS and a stalled response."""
+    result = queue.Queue()
+    def download():
+        try:
+            result.put((fetch(url, timeout=WEB_TIMEOUT), None))
+        except Exception as error:
+            result.put((None, error))
+    threading.Thread(target=download, daemon=True).start()
+    try:
+        data, error = result.get(timeout=WEB_DEADLINE)
+    except queue.Empty:
+        raise TimeoutError('Web preview deadline exceeded') from None
+    if error:
+        raise error
+    return data
+
+
+def web(query, allow_network=True):
+    if not query:
+        return [], 'Ask a question or type web followed by your search'
+    browser = browser_search(query)
+    browser.update(searchUrl=browser['value'], previewState='empty')
+    health_path = CACHE / 'web-provider-health.json'
+    health = read_json(health_path)
+    if isinstance(health, dict) and cooling_down(health.get('until', 0)):
+        browser['previewState'] = 'unavailable'
+        return [browser], 'Preview unavailable • Enter searches the web'
+    if not allow_network:
+        preview = row(query, 'Wikipedia · online', 'web', browser['value'])
+        preview.update(summary='Finding an article preview…', source='Wikipedia', loading=True,
+                       searchUrl=browser['value'], refreshWeb=query, icon='travel_explore')
+        return [preview], 'Searching Wikipedia…'
+    try:
+        data = fetch_web('https://en.wikipedia.org/w/api.php?' + urlencode({
+            'action': 'query', 'generator': 'search', 'gsrsearch': web_terms(query),
+            'gsrlimit': 3, 'gsrnamespace': 0, 'prop': 'extracts|pageprops',
+            'ppprop': 'disambiguation', 'exintro': 1, 'explaintext': 1,
+            'exchars': 500, 'exlimit': 3, 'format': 'json', 'formatversion': 2,
+        }))
+        if 'error' in data:
+            raise ValueError('Wikipedia lookup failed')
+        pages = data.get('query', {}).get('pages', [])
+        if not isinstance(pages, list):
+            raise ValueError('Invalid preview response')
+        entries, seen = [], set()
+        for page in sorted(pages, key=lambda page: page.get('index', 1000)):
+            if page.get('missing') or 'disambiguation' in page.get('pageprops', {}):
+                continue
+            page_id = int(page['pageid'])
+            if page_id <= 0 or page_id in seen:
+                continue
+            seen.add(page_id)
+            title = plain_text(page['title'], 200)
+            if not title:
+                continue
+            entries.append((title, plain_text(page.get('extract', ''), 500), f'https://en.wikipedia.org/?curid={page_id}'))
+        if not entries:
+            return [browser], 'No article preview found • Enter searches the web'
+        title, summary, url = entries[0]
+        lead = row(title, 'Wikipedia · article preview', 'web', url)
+        lead.update(summary=summary or 'Preview text is unavailable. Open the article to read more.',
+                    source='Wikipedia', searchUrl=browser['value'], loading=False,
+                    previewState='ready', icon='travel_explore')
+        results = [lead]
+        for title, _, url in entries[1:3]:
+            result = row(title, 'Wikipedia · en.wikipedia.org', 'url', url)
+            result.update(role='web-link', searchUrl=browser['value'], icon='article')
+            results.append(result)
+        return results, 'Wikipedia · online • Enter opens the selected result'
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        browser['previewState'] = 'unavailable'
+        # Only provider health is persisted, never the query or result.
+        save_cache(health_path, {'until': time.time() + WEB_COOLDOWN})
+        return [browser], 'Preview unavailable • Enter still searches the web'
+
+
+# All three-letter currency codes are accepted; the providers determine rate coverage.
+# This avoids silently excluding new currencies through a fixed application whitelist.
+CURRENCY_NAMES = {
+    '£': 'GBP', 'gbp': 'GBP', 'pound sterling': 'GBP', 'pounds sterling': 'GBP',
+    'pound': 'GBP', 'pounds': 'GBP', 'british pound': 'GBP', 'british pounds': 'GBP', 'sterling': 'GBP',
+    '€': 'EUR', 'euro': 'EUR', 'euros': 'EUR',
+    '$': 'USD', 'us$': 'USD', 'dollar': 'USD', 'dollars': 'USD', 'us dollar': 'USD', 'us dollars': 'USD',
+    '₹': 'INR', 'rupee': 'INR', 'rupees': 'INR', 'indian rupees': 'INR',
+    'yen': 'JPY', 'japanese yen': 'JPY',
+    'canadian dollar': 'CAD', 'canadian dollars': 'CAD',
+    'australian dollar': 'AUD', 'australian dollars': 'AUD',
+    'swiss franc': 'CHF', 'swiss francs': 'CHF',
+    'chinese yuan': 'CNY', 'yuan': 'CNY',
+    'uae dirham': 'AED', 'uae dirhams': 'AED',
+    'emirati dirham': 'AED', 'emirati dirhams': 'AED',
+    'united arab emirates dirham': 'AED', 'united arab emirates dirhams': 'AED',
+}
+
+
+def currency_names():
+    names = dict(CURRENCY_NAMES)
+    # On Linux, iso-codes provides the full official currency names locally.
+    # Codes always work even if this optional desktop package is absent.
+    try:
+        entries = json.loads(Path('/usr/share/iso-codes/json/iso_4217.json').read_text())['4217']
+        for entry in entries:
+            code, name = entry['alpha_3'], entry['name'].casefold()
+            if re.fullmatch(r'[A-Z]{3}', code):
+                names.setdefault(name, code)
+                names.setdefault(name + 's', code)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return names
+
+
+CURRENCY_ALIASES = currency_names()
+
+
+def currency_code(unit):
+    if unit.casefold() in CURRENCY_ALIASES:
+        return CURRENCY_ALIASES[unit.casefold()]
+    if re.fullmatch(r'[A-Za-z]{3}', unit):
+        return unit.upper()
+    return None
+
+
+def currency_match(query):
+    # £100 / $100 / €100 are natural currency input; amounts still stay local.
+    query = re.sub(r'^\s*(?:convert\s+)?([£$€₹])\s*(' + NUMBER + r')', r'\2 \1', query, flags=re.I)
+    match = conversion(query)
+    if not match:
+        return None
+    amount, source, target = match
+    a, b = currency_code(source), currency_code(target)
+    return (amount.replace(',', ''), a, b) if a and b else None
+
+
+def browser_search(query):
+    return row(f'Search the web for “{query}”', 'DuckDuckGo • Enter opens your browser', 'url',
+               'https://duckduckgo.com/?' + urlencode({'q': query}))
+
+
+def contextual(query, allow_network=True, online_previews=True):
+    """Classify locally and preview clear web queries after checking local matches."""
+    explicit_web = re.match(r'^(?:web|search online|search the web|google|duckduckgo)\s*:?\s+(.+)', query, re.I)
+    if explicit_web:
+        results, status = web(explicit_web[1].strip(), allow_network=allow_network)
+        return results, status, 'web'
+    explicit_files = re.match(r'^files?\s*:\s*(.+)', query, re.I)
+    if explicit_files:
+        results, status = files(explicit_files[1].strip(), broad=True)
+        return results, status, 'files'
+    answers = local(query)
+    if answers:
+        return answers, 'Answer • Enter copies the result', 'answer'
+    pair = currency_match(query)
+    if pair:
+        results, status = currency(' '.join([pair[0], pair[1], 'to', pair[2]]), allow_network=allow_network)
+        if not results:
+            results = [row('Currency conversion unavailable', status, 'info')]
+        return results, status, 'answer'
+    match = conversion(query)
+    if match:
+        try:
+            unit_value(*match)
+        except (ValueError, ArithmeticError) as error:
+            return [row('Conversion unavailable', str(error), 'info')], 'Check the unit names and quantities', 'conversion'
+    # Malformed calculations must not turn into web searches or unrelated files.
+    if re.fullmatch(r'[\d\s.eEpi+\-*/%^()=×÷]+', query) and re.search(r'\d.*[+*/^=×÷]|[=+*/^×÷].*\d', query):
+        try:
+            calculate(query.lstrip('=').strip())
+        except (ValueError, SyntaxError, ArithmeticError, TypeError, OverflowError):
+            return [row('No calculation result', 'Check the expression and avoid division by zero', 'info')], 'Calculation', 'answer'
+    if re.fullmatch(r'https?://[^\s]+', query, re.I) or re.fullmatch(r'(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|dev|app|co|uk|edu|gov|info)(?:/[^\s]*)?', query, re.I):
+        url = query if re.match(r'https?://', query, re.I) else 'https://' + query
+        return [row(query, 'Website • Enter opens your browser', 'url', url)], 'Website', 'web'
+    results, status = files(query, broad=False)
+    if not results and web_query(query):
+        if online_previews and settings().get('auto_web_previews', True):
+            results, status = web(query, allow_network=allow_network)
+            return results, status, 'web'
+        return [browser_search(query), row('Show instant online results', 'Wikipedia • select to send this query online', 'lookup', query)], 'Web search • Enter opens your browser', 'question'
+    # Offered only when there are no app, Settings or file matches (decided in QML).
+    if query:
+        results.append(browser_search(query))
+    return results, status, 'search'
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('mode', nargs='?', default='toggle', choices=['toggle', 'index', 'reindex', 'local', 'all', 'search', 'files', 'web', 'currency'])
+    parser.add_argument('query', nargs='?', default='')
+    parser.add_argument('--stream', action='store_true', help='emit cached answers and web loading state first')
+    parser.add_argument('--local-only', action='store_true', help='keep a matching app or Settings query local')
+    args = parser.parse_args()
+    if args.mode == 'toggle':
+        return subprocess.run([str(Path.home() / '.local/bin/juarchy-shell'), 'spotlight', 'toggle']).returncode
+    if args.mode in ('index', 'reindex'):
+        if index_files(args.mode == 'reindex'):
+            print(json.dumps({'indexUpdated': True}), flush=True)
+        return 0
+    query = args.query[:300].strip()
+    try:
+        intent = args.mode
+        if args.mode == 'search':
+            results, status, intent = contextual(query, allow_network=not args.stream, online_previews=not args.local_only)
+        elif args.mode == 'all':
+            answers = local(query)
+            match = conversion(query)
+            if answers:
+                results, status = answers, 'Answer • Enter copies the result'
+            elif match and all(len(code) == 3 and code.isalpha() for code in match[1:]):
+                results = [row(f'Convert {query}', 'Currency lookup • select to use online rates', 'mode', 'currency')]
+                status = 'Select Convert to request reference rates'
+            else:
+                results, status = files(query, broad=False)
+        elif args.mode == 'currency' and local(query):
+            results, status = local(query), 'Unit conversion • Enter copies the answer'
+        elif args.mode == 'local':
+            results, status = local(query), ''
+        else:
+            results, status = globals()[args.mode](query)
+        def emit():
+            print(json.dumps({'query': args.query, 'mode': args.mode, 'results': results, 'status': status, 'intent': intent}), flush=True)
+        emit()
+        if args.stream and args.mode == 'search' and any(result.get('refreshRates') for result in results):
+            pair = currency_match(query)
+            if pair:
+                error = refresh_rates(pair[1], pair[2])
+                results, status, intent = contextual(query, allow_network=False, online_previews=not args.local_only)
+                for result in results:
+                    result['refreshRates'] = False
+                if error and results and results[0]['kind'] == 'copy':
+                    status = 'Refresh unavailable • cached rate'
+                emit()
+        if args.stream and args.mode == 'search' and any(result.get('refreshWeb') for result in results):
+            lookup = next(result['refreshWeb'] for result in results if result.get('refreshWeb'))
+            results, status = web(lookup)
+            intent = 'web'
+            emit()
+    except (OSError, ValueError, sqlite3.Error) as error:
+        print(json.dumps({'query': args.query, 'mode': args.mode, 'results': [], 'status': str(error)}))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

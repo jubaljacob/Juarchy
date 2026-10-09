@@ -15,6 +15,14 @@ Singleton {
         nexusComp.createObject(parent ?? dummy, props);
     }
 
+    function openPage(pageId: string, subPage: int): var {
+        const index = pageId ? PageRegistry.pages.findIndex(page => page.id === pageId) : 0;
+        if (index < 0) return null;
+        const win = nexusComp.createObject(dummy);
+        win.openPage(index, subPage);
+        return win;
+    }
+
     QtObject {
         id: dummy
     }
@@ -24,6 +32,13 @@ Singleton {
 
         FloatingWindow {
             id: win
+            readonly property alias nState: nexus.nState
+
+            function openPage(index: int, subPage: int): void {
+                nexus.nState.currentPageIdx = index;
+                // Pages reads this stack when it loads the destination after its transition.
+                nexus.nState.subPageIdxStack = subPage >= 0 ? [subPage] : [];
+            }
 
             color: Colours.tPalette.m3surface
             surfaceFormat.opaque: false

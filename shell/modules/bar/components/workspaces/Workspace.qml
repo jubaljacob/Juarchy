@@ -186,8 +186,12 @@ Item {
         Loader {
             id: indicator
 
+            // Window icons already identify populated workspaces; the surrounding
+            // highlight communicates their grouping and active state.
+            active: !root.hasWindows
+            visible: active
             Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
-            Layout.preferredHeight: Tokens.sizes.bar.innerWidth - Tokens.padding.small
+            Layout.preferredHeight: active ? Tokens.sizes.bar.innerWidth - Tokens.padding.small : 0
             sourceComponent: {
                 if (root.displayType === BarWorkspaceDisplay.Icons)
                     return iconLoaderComponent;
@@ -205,7 +209,7 @@ Item {
             asynchronous: true
 
             Layout.fillWidth: true
-            Layout.topMargin: -Tokens.spacing.extraSmall / 2
+            Layout.topMargin: indicator.active ? -Tokens.spacing.extraSmall / 2 : 0
             Layout.preferredHeight: root.hasWindows && item ? (item as LazyListView).layoutHeight : 0
 
             visible: active

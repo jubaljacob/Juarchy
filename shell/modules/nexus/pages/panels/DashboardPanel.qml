@@ -32,8 +32,8 @@ PageBase {
         }
 
         ToggleRow {
-            text: Tr.tr("Show on hover")
-            subtext: Tr.tr("Reveal when the cursor reaches the screen edge")
+            text: Tr.tr("Expand notch on hover")
+            subtext: Tr.tr("Preview within the taskbar. Click the notch to open the dashboard.")
             checked: Config.dashboard.showOnHover
             onToggled: GlobalConfig.dashboard.showOnHover = checked
         }

@@ -1,7 +1,10 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import Caelestia.Config
 import qs.components
+import qs.components.misc
+import qs.services
 import qs.modules.bar as Bar
 import qs.modules.dashboard as Dashboard
 import qs.modules.groupedlauncher as Launcher
@@ -20,7 +23,14 @@ Item {
     required property ScreenState screenState
     required property Bar.BarWrapper bar
     required property real borderThickness
-    readonly property int dashboardPeekHeight: 8
+    readonly property bool dashboardHovered: dashboard.hovered
+    readonly property bool screenshotBusy: screenshotDelay.running || screenshotProcess.running
+
+    function captureScreenshot(): void {
+        if (screenshotBusy) return;
+        screenState.dashboard = false;
+        screenshotDelay.start();
+    }
 
     readonly property alias osd: osd
     readonly property alias osdWrapper: osdWrapper
@@ -29,6 +39,7 @@ Item {
     readonly property alias sessionWrapper: sessionWrapper
     readonly property alias launcher: launcher
     readonly property alias dashboard: dashboard
+    readonly property alias notch: notch
     readonly property alias popouts: popoutsWrapper.content
     readonly property alias popoutsWrapper: popoutsWrapper
     readonly property alias utilities: utilities
@@ -115,7 +126,74 @@ Item {
 
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: parent.top
-        anchors.topMargin: (-implicitHeight - 5 - Math.max(0, root.bar.implicitHeight - root.dashboardPeekHeight)) * offsetScale
+        anchors.topMargin: (-implicitHeight - root.bar.implicitHeight - 5) * offsetScale
+    }
+
+    Dashboard.Notch {
+        id: notch
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: -root.bar.implicitHeight
+        z: 10
+        barHeight: root.bar.implicitHeight
+        pixelsPerMillimeter: root.screen.physicalPixelDensity > 0 && root.screen.devicePixelRatio > 0
+            ? root.screen.physicalPixelDensity / root.screen.devicePixelRatio : 96 / 25.4
+        handleColour: Colours.palette.m3onSurfaceVariant
+        activeColour: Colours.palette.m3primary
+        recordingColour: Colours.palette.m3error
+        iconFont: Tokens.font.icon.small
+        dndEnabled: Notifs.dnd
+        recordingActive: Recorder.running
+        nightLightEnabled: NightLight.enabled
+        nightLightBusy: NightLight.busy
+        microphoneMuted: Audio.sourceMuted
+        microphoneAvailable: !!Audio.source?.ready && !!Audio.source?.audio
+        keepAwakeEnabled: IdleInhibitor.enabled
+        screenshotBusy: root.screenshotBusy
+        visible: Config.dashboard.enabled && root.bar.shouldBeVisible && !root.screenshotBusy
+        expanded: root.screenState.dashboard
+        dashboardHovered: root.dashboardHovered
+        peekOnHover: Config.dashboard.showOnHover
+        onToggled: root.screenState.dashboard = !root.screenState.dashboard
+        onDismissed: root.screenState.dashboard = false
+        onDndToggleRequested: Notifs.dnd = !Notifs.dnd
+        onNightLightToggleRequested: NightLight.toggle()
+        onMicrophoneToggleRequested: {
+            if (Audio.source?.ready && Audio.source?.audio)
+                Audio.source.audio.muted = !Audio.sourceMuted;
+        }
+        onKeepAwakeToggleRequested: IdleInhibitor.enabled = !IdleInhibitor.enabled
+        onScreenshotRequested: root.captureScreenshot()
+        onRecordingToggleRequested: {
+            if (Recorder.running)
+                Recorder.stop();
+            else
+                Recorder.start();
+        }
+    }
+
+    Timer {
+        id: screenshotDelay
+        interval: 300
+        onTriggered: screenshotProcess.running = true
+    }
+
+    Process {
+        id: screenshotProcess
+        command: [`${Quickshell.env("HOME")}/.local/bin/juarchy-screenshot`]
+    }
+
+    Loader {
+        active: notch.visible && notch.revealed
+        sourceComponent: Ref {
+            service: NightLight
+        }
+    }
+
+    Loader {
+        active: notch.visible && (notch.revealed || Recorder.running)
+        sourceComponent: Ref {
+            service: Recorder
+        }
     }
 
     BarPopouts.ClipWrapper {
@@ -139,7 +217,7 @@ Item {
     Toasts.Toasts {
         id: toasts
 
-        anchors.bottom: sidebar.visible ? parent.bottom : utilities.top
+        anchors.bottom: sidebar.visible || !utilities.visible ? parent.bottom : utilities.top
         anchors.right: sidebar.left
         anchors.margins: Tokens.padding.medium
     }
@@ -150,7 +228,7 @@ Item {
         screenState: root.screenState
 
         anchors.top: notifications.bottom
-        anchors.bottom: utilities.top
+        anchors.bottom: utilities.visible ? utilities.top : parent.bottom
         anchors.right: parent.right
         anchors.topMargin: -notifications.anchors.topMargin
     }

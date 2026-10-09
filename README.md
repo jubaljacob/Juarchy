@@ -18,7 +18,57 @@ The desktop shell now has its own QuickShell configuration, `juarchy`, and
 uses `juarchy-shell` for startup and controls. Its initial appearance is
 unchanged. Caelestia's native plugins, CLI theme tools, settings directory,
 state and caches remain compatibility dependencies in this first migration.
-This stage does not introduce new privacy defaults or remove features.
+Privacy preferences are stored separately in `~/.config/juarchy/privacy.json`.
+Weather waits for a chosen location, remote music artwork and visualisers start
+disabled, and notification history stays in memory by default. Existing artwork
+from local files and playback controls remain available.
+
+In Settings, choose a weather location under **Language & region**, enable media
+options under **Services**, and set notification retention under
+**Services → Notifications**. Session-only history clears at logout or shell
+restart and erases older saved notification content and cached notification
+images. Longer retention offers 1, 7 or 30 days; an erase action clears history
+and its images immediately. Notification messages are hidden on the lock screen.
+Saved history and privacy preferences are separate from theme and monitor settings.
+
+The dashboard notch is completely hidden at rest. Hovering over its top-centre
+taskbar area reveals it to half the taskbar height; clicking its centre dash
+opens the full dashboard.
+The notch shares the dashboard's translucent, blurred material and smoothly
+joins the top edge and the open dashboard.
+Moving outside the notch and dashboard retracts it. Click the centre dash again,
+click outside, or press Escape to close it. The notch is approximately 8 cm
+wide using the display's reported physical density and scaling. Existing
+dashboard shortcuts still work. Its Settings hover option controls the notch
+preview rather than opening the full dashboard.
+The icon to the right of the dash toggles Do not disturb. The icon to its left
+starts fullscreen screen recording without audio; click its red stop icon to
+stop and save the recording. These quick controls work independently of the
+dashboard.
+The sun/moon icon beside DND toggles Night light, using Hyprsunset at 4500 K for
+warmer screen colours. Turning it off restores normal colours and leaves
+brightness alone. Hyprsunset starts on the first enable action, and the icon
+reads its actual state, including changes made outside the shell.
+Normal colours show a sun; the enabled blue-light filter shows a moon. Enabled
+toggles have a soft coloured highlight, with smooth icon and colour transitions.
+Use `juarchy-night-light enable --temperature 4000`, `disable`, or `status`
+from a terminal. The notch toggle uses 4500 K when enabling.
+The microphone icon toggles mute for the current default input and shows a
+crossed-out microphone when muted. The coffee-cup icon toggles Keep awake,
+preventing automatic screen blanking and sleep. The screenshot icon
+beside recording hides the notch and closes the dashboard, then lets you select
+a region to save and copy to the clipboard. Escape cancels the selection.
+
+The bottom-right utilities panel is disabled. Its corner hover and shortcut
+cannot open it, and it no longer appears below the notification sidebar.
+Quick actions remain in the notch, while connectivity, audio, devices and
+power controls remain in the taskbar. Notifications and status toasts still work.
+
+Application tray icons stay hidden behind a chevron at the left edge of the
+top-right controls, followed by the date and time, active window, status icons
+and power button. Click it to reveal the icons, then click it again or move away to
+collapse them. Clicking an icon keeps its usual application action; hovering
+an expanded icon still shows its tray menu.
 
 ## Switch the current desktop
 
@@ -67,7 +117,13 @@ This is a desktop configuration, not an operating-system image.
 
 ## Install on another computer
 
-Clone your private repository with your authenticated GitHub account:
+For a friend starting with Windows, follow the full
+[Windows dual-boot → Arch → Juarchy installation guide](docs/INSTALL.md).
+It covers private repository access or a shareable archive, dependencies,
+services, laptop checks, updates and recovery. Juarchy installs the desktop
+after Arch and Hyprland are working; it does not partition disks or install Arch.
+
+Clone the private repository with an authenticated GitHub account that has access:
 
 ```sh
 gh repo clone jubaljacob/Juarchy
@@ -79,6 +135,7 @@ From the checkout, inspect the required packages:
 ```sh
 python scripts/dependencies.py
 python scripts/dependencies.py --check
+python scripts/doctor.py
 ```
 
 The first command prints installation commands without running them. The
@@ -92,15 +149,17 @@ the original `caelestia` configuration is preserved.
 Preview and install as your desktop user, without sudo:
 
 ```sh
-python scripts/install.py
-python scripts/install.py --apply
+python scripts/install.py --shared-only
+python scripts/install.py --shared-only --apply
 ```
 
 The installer backs up every destination it replaces. It installs copies,
 does not install packages or restart services, and leaves unrelated files
 alone. Log out and back in to activate the installed configuration. It uses
 the conventional `~/.config` and `~/.local` layout; a custom `XDG_CONFIG_HOME`
-is not supported by this installer yet.
+is not supported by this installer yet. `--shared-only` ignores any personal
+`local/home` overrides; omit it when deliberately applying your own overrides.
+Existing machine settings and privacy choices are always preserved.
 
 On a computer needing the original Intel/NVIDIA laptop workarounds, preview
 the optional profile first:
@@ -113,6 +172,18 @@ python scripts/install.py --profile intel-nvidia --apply
 See [portability and known issues](docs/PORTABILITY.md) before enabling it.
 
 ## Make it your own
+
+### Screenshots
+
+Press **Print Screen** and drag to select a region. **Escape** cancels.
+The screenshot is saved under `~/Pictures/Screenshots` and copied to the
+clipboard. **Shift + Print Screen** captures all displays. The desktop
+menu's screenshot entries use the same tool. Region selection uses `slurp`
+and capture uses `grim`, independently of the desktop shell.
+
+Run `juarchy-screenshot` (or `juarchy-screenshot --full`) from a terminal.
+Set `JUARCHY_SCREENSHOT_DIR` to override the save directory. Otherwise the
+tool uses the configured XDG Pictures directory plus `Screenshots`.
 
 ### Wallpaper themes
 
@@ -201,3 +272,10 @@ Derived from [Caelestia Shell](https://github.com/caelestia-dots/shell)
 retain their original notices and licenses. Caelestia native module names,
 global shortcut IDs and layer namespaces remain intact for runtime compatibility.
 QuickShell instance selection uses Juarchy's own `juarchy` configuration name.
+
+## Spotlight search
+
+**Super + Space** opens one contextual search field for apps, settings, filenames,
+calculations, broad unit conversions, web searches and cached currency rates.
+**Super + Alt + Space** opens the grouped desktop menu. See
+[Spotlight usage and privacy](docs/spotlight.md) for examples and search roots.

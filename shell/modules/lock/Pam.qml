@@ -79,6 +79,11 @@ Scope {
         config: "passwd"
         configDirectory: Quickshell.shellPath("assets/pam.d")
 
+        onActiveChanged: {
+            if (active)
+                root.lockMessage = "";
+        }
+
         onMessageChanged: {
             if (message.startsWith("The account is locked"))
                 root.lockMessage = message;
@@ -117,8 +122,9 @@ Scope {
 
         interval: 4000
         onTriggered: {
-            if (root.state !== Pam.MaxTries)
-                root.state = Pam.None;
+            // PAM enforces its own lockout period on every attempt. Let the UI
+            // accept another attempt after this message, including MaxTries.
+            root.state = Pam.None;
         }
     }
 

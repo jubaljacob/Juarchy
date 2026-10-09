@@ -51,7 +51,7 @@
         ],
         "tray": {
             "background": false,
-            "compact": false,
+            "compact": true,
             "hiddenIcons": [
                 "blueman"
             ],
@@ -101,6 +101,9 @@
     "dashboard": {
         "showClockSeconds": true,
         "showOnHover": true
+    },
+    "utilities": {
+        "enabled": false
     },
     "services": {
         "clockFormat": "TwentyFourHour",

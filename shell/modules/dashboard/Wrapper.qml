@@ -13,6 +13,12 @@ Item {
     id: root
 
     required property ScreenState screenState
+    readonly property bool hovered: hoverTracker.hovered
+
+    HoverTracker {
+        id: hoverTracker
+        enabled: root.shouldBeActive
+    }
     readonly property FileDialog facePicker: FileDialog {
         title: Tr.tr("Select a profile picture")
         filterLabel: Tr.tr("Image files")

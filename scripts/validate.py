@@ -44,6 +44,12 @@ def main():
     subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-v'], cwd=ROOT, check=True)
     subprocess.run([sys.executable, 'home/.local/lib/jubal_launcher/test_package_guidance.py'], cwd=ROOT, check=True,
                    env={**os.environ, 'PYTHONPATH': str(ROOT / 'home/.local/lib')})
+    qml_runner = shutil.which('qmltestrunner') or shutil.which('qmltestrunner6')
+    if not qml_runner and Path('/usr/lib/qt6/bin/qmltestrunner').exists():
+        qml_runner = '/usr/lib/qt6/bin/qmltestrunner'
+    if qml_runner:
+        subprocess.run([qml_runner, '-input', str(ROOT / 'tests/qml'), '-o', '-,txt'],
+                       check=True, timeout=30, env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'})
     print('Validation passed. Live QML rendering and hardware behavior still require a desktop session.')
 
 

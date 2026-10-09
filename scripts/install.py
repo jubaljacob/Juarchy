@@ -36,12 +36,13 @@ def safe_target(home, relative):
     return path
 
 
-def plan(profile=None, home=None):
+def plan(profile=None, home=None, shared_only=False):
     entries = {}
     trees = [ROOT / 'home']
     if profile:
         trees.append(ROOT / 'profiles' / profile / 'home')
-    trees.append(ROOT / 'local/home')
+    if not shared_only:
+        trees.append(ROOT / 'local/home')
     for tree in trees:
         if not tree.exists():
             continue
@@ -53,11 +54,13 @@ def plan(profile=None, home=None):
             if source.is_file():
                 entries[str(source.relative_to(tree))] = source
     entries['.config/quickshell/juarchy'] = ROOT / 'shell'
-    if home is not None and not exists(home / '.config/juarchy/privacy.json'):
-        entries['.config/juarchy/privacy.json'] = ROOT / 'examples/privacy.json'
-    # Keep each computer's overrides across subsequent installs.
-    if home is not None and not exists(home / '.config/hypr/machine.lua'):
-        entries['.config/hypr/machine.lua'] = ROOT / 'examples/machine.lua'
+    # Existing machine settings and consent always win, even over local/home.
+    for name, example in (('.config/juarchy/privacy.json', 'privacy.json'),
+                          ('.config/hypr/machine.lua', 'machine.lua')):
+        if home is not None and exists(home / name):
+            entries.pop(name, None)
+        elif home is not None:
+            entries.setdefault(name, ROOT / 'examples' / example)
     return entries
 
 
@@ -134,13 +137,21 @@ def main():
     parser.add_argument('--apply', action='store_true', help='write files; without this flag only preview')
     parser.add_argument('--home', type=Path, default=Path.home(), help='target home (also useful for staging)')
     parser.add_argument('--profile', choices=['intel-nvidia'], help='optional hardware workarounds')
+    parser.add_argument('--shared-only', action='store_true', help='ignore local/home overrides when installing on another computer')
     parser.add_argument('--restore', type=Path, help='restore one installer backup; current files are backed up again')
     args = parser.parse_args()
     home = args.home.expanduser().absolute()
     if not home.is_dir() or home.is_symlink():
         raise ValueError('Target home must be an existing real directory.')
-    if args.restore and args.profile:
-        raise ValueError('--restore and --profile cannot be combined.')
+    if args.restore and (args.profile or args.shared_only):
+        raise ValueError('--restore cannot be combined with --profile or --shared-only.')
+    if args.apply and not args.restore and home == Path.home().absolute():
+        if os.geteuid() == 0:
+            raise ValueError('Run the desktop installer as your regular user, without sudo.')
+        for variable, directory in (('XDG_CONFIG_HOME', '.config'), ('XDG_DATA_HOME', '.local/share'),
+                                    ('XDG_STATE_HOME', '.local/state')):
+            if os.environ.get(variable) and Path(os.environ[variable]) != home / directory:
+                raise ValueError(variable + ' uses a custom path; this installer requires ' + str(home / directory))
     if args.restore:
         backup = args.restore.expanduser().resolve()
         if (backup / 'FAILED').exists():
@@ -156,7 +167,7 @@ def main():
                 raise ValueError('Incomplete backup: ' + item['path'])
             entries[item['path']] = source
     else:
-        entries = plan(args.profile, home)
+        entries = plan(args.profile, home, args.shared_only)
     for name in entries:
         target = safe_target(home, name)
         print(('Replace ' if exists(target) else 'Create  ') + str(target))

@@ -66,7 +66,19 @@ def transform(name, text):
             if old not in text:
                 raise ValueError('Expected startup or shortcut missing: ' + old)
             text = text.replace(old, new)
-        return text.replace('agent and Caelestia', 'agent and Juarchy')
+        text = text.replace('agent and Caelestia', 'agent and Juarchy')
+        lines = text.splitlines(keepends=True)
+        for index, line in enumerate(lines):
+            if line.startswith('app("SUPER + SPACE",'):
+                lines[index] = 'o.bind("SUPER + SPACE", "Spotlight search", hl.dsp.global("juarchy:spotlight"))\n'
+            elif line.startswith('app("SUPER + ALT + SPACE",'):
+                lines[index] = 'o.bind("SUPER + ALT + SPACE", "Desktop menu", hl.dsp.global("juarchy:menu"))\n'
+        text = ''.join(lines)
+        if 'juarchy-screenshot' not in text:
+            text += '\n-- Screenshot shortcuts\n'
+            text += 'hl.bind("PRINT", hl.dsp.exec_cmd(\'"$HOME/.local/bin/juarchy-screenshot"\'), { release = true, description = "Screenshot: select region" })\n'
+            text += 'hl.bind("SHIFT + PRINT", hl.dsp.exec_cmd(\'"$HOME/.local/bin/juarchy-screenshot" --full\'), { release = true, description = "Screenshot: full screen" })\n'
+        return text
     if name.endswith('jubal-launcher'):
         if '"qs", "-c", "caelestia"' not in text:
             raise ValueError('Expected native launcher routing missing')
@@ -90,7 +102,9 @@ def transform(name, text):
                 if command[:2] == ['caelestia', 'shell']:
                     item['command'] = ['~/.local/bin/juarchy-shell', *command[2:]]
                 elif command == ['caelestia', 'screenshot', '-r']:
-                    item['command'] = ['qs', '-c', 'juarchy', 'ipc', 'call', 'picker', 'open']
+                    item['command'] = ['~/.local/bin/juarchy-screenshot']
+                elif command == ['caelestia', 'screenshot']:
+                    item['command'] = ['~/.local/bin/juarchy-screenshot', '--full']
                 elif item['label'] == 'Caelestia version':
                     item['label'] = 'Juarchy shell version'
                     item['command'] = ['~/.local/bin/juarchy-shell', 'version']
@@ -121,6 +135,8 @@ def activate(home):
             raise RuntimeError('Unlock the desktop before switching shells')
     with tempfile.TemporaryDirectory(prefix='juarchy-activate-') as directory:
         entries = {SHELL: ROOT / 'shell', '.local/bin/juarchy-shell': ROOT / 'home/.local/bin/juarchy-shell'}
+        entries['.local/bin/juarchy-spotlight'] = ROOT / 'home/.local/bin/juarchy-spotlight'
+        entries['.local/bin/juarchy-screenshot'] = ROOT / 'home/.local/bin/juarchy-screenshot'
         for name in FILES:
             source = install.safe_target(home, name)
             target = Path(directory) / name

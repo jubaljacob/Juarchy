@@ -1,5 +1,8 @@
 {
   "theme": {
-    "postHook": "python3 \"$HOME/.config/caelestia/fix-thunar-theme.py\""
+    "postHook": "python3 \"$HOME/.config/caelestia/fix-thunar-theme.py\"",
+    "iconTheme": "Papirus",
+    "iconThemeDark": "Papirus-Dark",
+    "iconThemeLight": "Papirus-Light"
   }
 }

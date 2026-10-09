@@ -19,7 +19,6 @@ CustomMouseArea {
     required property bool fullscreen
 
     property point dragStart
-    property bool dashboardShortcutActive
     property bool osdShortcutActive
     property bool utilitiesShortcutActive
 
@@ -39,11 +38,6 @@ CustomMouseArea {
 
     function inRightPanel(panel: Item, x: real, y: real): bool {
         return x > Math.min(width - Config.border.minThickness, root.borderThickness + panel.x) && withinPanelHeight(panel, x, y);
-    }
-
-    function inTopPanel(panel: Item, x: real, y: real): bool {
-        const panelBottom = bar.implicitHeight + panel.y + panel.height;
-        return y < Math.max(Config.border.minThickness, panels.dashboardPeekHeight, panelBottom) && withinPanelWidth(panel, x, y);
     }
 
     function inBottomPanel(panel: Item, x: real, y: real, isCorner = false): bool {
@@ -71,9 +65,6 @@ CustomMouseArea {
                 screenState.osd = false;
                 root.panels.osd.hovered = false;
             }
-
-            if (!dashboardShortcutActive)
-                screenState.dashboard = false;
 
             if (!utilitiesShortcutActive)
                 screenState.utilities = false;
@@ -202,27 +193,11 @@ CustomMouseArea {
                 screenState.launcher = false;
         }
 
-        // Show dashboard on hover
-        const showDashboard = Config.dashboard.showOnHover && inTopPanel(panels.dashboard, x, y);
-
-        // Always update visibility based on hover if not in shortcut mode
-        if (!dashboardShortcutActive) {
-            screenState.dashboard = showDashboard;
-        } else if (showDashboard) {
-            // If hovering over dashboard area while in shortcut mode, transition to hover control
-            dashboardShortcutActive = false;
-        }
-
-        // Show/hide dashboard on drag (for touchscreen devices)
-        if (pressed && inTopPanel(panels.dashboard, dragStart.x, dragStart.y) && withinPanelWidth(panels.dashboard, x, y)) {
-            if (dragY > Config.dashboard.dragThreshold)
-                screenState.dashboard = true;
-            else if (dragY < -Config.dashboard.dragThreshold)
-                screenState.dashboard = false;
-        }
+        // Dashboard hover and clicks belong to its taskbar notch. Pointer movement
+        // and drags never open it; leaving its combined area dismisses it.
 
         // Show utilities on hover
-        const showUtilities = inBottomPanel(panels.utilities, x, y, true);
+        const showUtilities = Config.utilities.enabled && inBottomPanel(panels.utilities, x, y, true);
 
         // Always update visibility based on hover if not in shortcut mode
         if (!utilitiesShortcutActive) {
@@ -245,21 +220,20 @@ CustomMouseArea {
         }
     }
 
-    // Observe hover above child controls without intercepting their clicks.
-    Item {
-        anchors.fill: parent
-        z: 1000
-
-        HoverHandler {
-            blocking: false
-            onPointChanged: {
-                if (hovered)
-                    root.updatePopoutHover(point.position.x, point.position.y);
+    // Observe from the ancestor. A full-window sibling above the controls
+    // consumes their hover even when its HoverHandler is non-blocking.
+    HoverHandler {
+        blocking: false
+        onPointChanged: {
+            if (hovered) {
+                root.updatePopoutHover(point.position.x, point.position.y);
             }
-            onHoveredChanged: {
-                if (hovered) {
-                    root.updatePopoutHover(point.position.x, point.position.y);
-                } else if (!root.popouts.isDetached) {
+        }
+        onHoveredChanged: {
+            if (hovered) {
+                root.updatePopoutHover(point.position.x, point.position.y);
+            } else {
+                if (!root.popouts.isDetached) {
                     root.popouts.hasCurrent = false;
                     root.bar.closeTray();
                 }
@@ -270,36 +244,18 @@ CustomMouseArea {
     // Monitor individual visibility changes
     Connections {
         function onLauncherChanged() {
-            // If launcher is hidden, clear shortcut flags for dashboard and OSD
+            // If launcher is hidden, clear shortcut flags for OSD and utilities
             if (!root.screenState.launcher) {
-                root.dashboardShortcutActive = false;
                 root.osdShortcutActive = false;
                 root.utilitiesShortcutActive = false;
 
-                // Also hide dashboard and OSD if they're not being hovered
-                const inDashboardArea = root.inTopPanel(root.panels.dashboard, root.mouseX, root.mouseY);
+                // Also hide OSD if it is not being hovered
                 const inOsdArea = root.inRightPanel(root.panels.osdWrapper, root.mouseX, root.mouseY);
 
-                if (!inDashboardArea) {
-                    root.screenState.dashboard = false;
-                }
                 if (!inOsdArea) {
                     root.screenState.osd = false;
                     root.panels.osd.hovered = false;
                 }
-            }
-        }
-
-        function onDashboardChanged() {
-            if (root.screenState.dashboard) {
-                // Dashboard became visible, immediately check if this should be shortcut mode
-                const inDashboardArea = root.inTopPanel(root.panels.dashboard, root.mouseX, root.mouseY);
-                if (!inDashboardArea) {
-                    root.dashboardShortcutActive = true;
-                }
-            } else {
-                // Dashboard hidden, clear shortcut flag
-                root.dashboardShortcutActive = false;
             }
         }
 
@@ -317,6 +273,10 @@ CustomMouseArea {
         }
 
         function onUtilitiesChanged() {
+            if (root.screenState.utilities && !Config.utilities.enabled) {
+                root.screenState.utilities = false;
+                return;
+            }
             if (root.screenState.utilities) {
                 // Utilities became visible, immediately check if this should be shortcut mode
                 const inUtilitiesArea = root.inBottomPanel(root.panels.utilities, root.mouseX, root.mouseY);

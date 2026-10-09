@@ -100,6 +100,30 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(list(external.iterdir()), [])
         self.assertFalse((self.home / '.local').exists())
 
+    def test_local_overrides_cannot_replace_existing_machine_or_consent(self):
+        fake_root = Path(self.temp.name) / 'repository'
+        for name in ('.config/hypr/machine.lua', '.config/juarchy/privacy.json'):
+            source = fake_root / 'local/home' / name
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text('local override')
+            target = self.home / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('friend settings')
+        with patch.object(installer, 'ROOT', fake_root):
+            entries = installer.plan(home=self.home)
+        self.assertNotIn('.config/hypr/machine.lua', entries)
+        self.assertNotIn('.config/juarchy/privacy.json', entries)
+
+    def test_shared_only_ignores_personal_overrides_on_first_install(self):
+        fake_root = Path(self.temp.name) / 'repository'
+        local_machine = fake_root / 'local/home/.config/hypr/machine.lua'
+        local_machine.parent.mkdir(parents=True)
+        local_machine.write_text('personal monitor')
+        with patch.object(installer, 'ROOT', fake_root):
+            self.assertEqual(installer.plan(home=self.home)['.config/hypr/machine.lua'], local_machine)
+            shared = installer.plan(home=self.home, shared_only=True)
+            self.assertEqual(shared['.config/hypr/machine.lua'], fake_root / 'examples/machine.lua')
+
     def test_failed_deployment_rolls_back_changed_files(self):
         a = self.home / 'a'
         a.write_text('before')

@@ -129,6 +129,7 @@ ColumnLayout {
         refresh();
     }
     function saveLocation(): void {
+        Weather.cacheCity(latitude.toFixed(5) + "," + longitude.toFixed(5), placeName);
         GlobalConfig.services.weatherLocation = latitude.toFixed(5) + "," + longitude.toFixed(5);
         browsing = false;
         status = "Weather location saved.";

@@ -1,5 +1,8 @@
 # Portability and known issues
 
+For a new laptop, start with the [installation guide](INSTALL.md), including
+the Windows dual-boot preparation and first-login checks.
+
 ## Shared baseline
 
 The shared configuration uses automatic monitor discovery and preserves the
@@ -12,7 +15,8 @@ from the runtime packages. Keep the runtime compatible with the captured
 `machine.lua` belongs to each computer and survives subsequent installs.
 Ignored overrides under `local/home/` can customize other files without
 publishing them. These overrides replace a shared file in full, rather than
-merging JSON settings.
+merging JSON settings. `--shared-only` excludes them. Existing `machine.lua`
+and Juarchy privacy preferences take precedence over all installation sources.
 
 ## Optional Intel/NVIDIA profile
 

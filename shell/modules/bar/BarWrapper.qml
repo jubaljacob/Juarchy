@@ -15,11 +15,13 @@ Item {
     required property BarPopouts.Wrapper popouts
     required property bool fullscreen
 
+    readonly property real componentScale: 0.85
+
     readonly property bool disabled: Strings.testRegexList(Config.bar.excludedScreens, screen.name)
 
     readonly property int clampedHeight: Math.max(Config.border.minThickness, implicitHeight)
-    readonly property int padding: Math.max(Tokens.padding.small, Config.border.thickness)
-    readonly property int contentHeight: Tokens.sizes.bar.innerWidth + padding * 2
+    readonly property int padding: Math.max(Math.round(Tokens.padding.small * componentScale), Config.border.thickness)
+    readonly property int contentHeight: Math.round(Tokens.sizes.bar.innerWidth * componentScale) + padding * 2
     readonly property int exclusiveZone: !disabled && (Config.bar.persistent || screenState.bar) ? contentHeight : Config.border.thickness
     readonly property bool shouldBeVisible: !fullscreen && !disabled && (Config.bar.persistent || screenState.bar || isHovered)
     property bool isHovered
@@ -83,6 +85,7 @@ Item {
 
         sourceComponent: Bar {
             height: root.contentHeight
+            componentScale: root.componentScale
             screen: root.screen
             screenState: root.screenState
             popouts: root.popouts // qmllint disable incompatible-type

@@ -17,7 +17,8 @@ RowLayout {
     required property ScreenState screenState
     required property BarPopouts.Wrapper popouts
     required property bool fullscreen
-    readonly property int vPadding: Tokens.padding.large
+    required property real componentScale
+    readonly property int vPadding: Math.round(Tokens.padding.large * componentScale)
 
     function closeTray(): void {
         if (!Config.bar.tray.compact)
@@ -72,7 +73,6 @@ RowLayout {
                 }
             } else {
                 popouts.hasCurrent = false;
-                tray.expanded = true;
             }
         } else if (id === "activeWindow" && Config.bar.popouts.activeWindow && Config.bar.activeWindow.showOnHover) {
             popouts.currentName = id.toLowerCase();
@@ -112,7 +112,7 @@ RowLayout {
         }
     }
 
-    spacing: Tokens.spacing.medium
+    spacing: Math.round(Tokens.spacing.medium * componentScale)
 
     Repeater {
         id: repeater
@@ -204,8 +204,14 @@ RowLayout {
         Layout.rightMargin: index === repeater.count - 1 ? root.vPadding : 0
         Layout.alignment: Qt.AlignVCenter
 
-        implicitWidth: item?.implicitWidth ?? 0
-        implicitHeight: item?.implicitHeight ?? 0
+        implicitWidth: Math.ceil((item?.implicitWidth ?? 0) * root.componentScale)
+        implicitHeight: Math.ceil((item?.implicitHeight ?? 0) * root.componentScale)
+
+        onItemChanged: {
+            if (!item) return;
+            item.transformOrigin = Item.TopLeft;
+            item.scale = Qt.binding(() => root.componentScale);
+        }
 
         children: item
     }

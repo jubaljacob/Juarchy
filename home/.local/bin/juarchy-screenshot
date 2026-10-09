@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Select a screen region, save a PNG, and copy it to the Wayland clipboard."""
+import argparse
+from datetime import datetime
+import fcntl
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+
+def notify(title, message):
+    if shutil.which('notify-send'):
+        subprocess.run(['notify-send', '-a', 'Juarchy', title, message], check=False)
+
+
+def screenshot(directory, full=False):
+    geometry = None
+    if not full:
+        selection = subprocess.run(['slurp', '-d'], stdin=subprocess.DEVNULL,
+                                   capture_output=True, text=True)
+        if selection.returncode != 0:
+            if selection.returncode == 1 and not selection.stdout.strip():
+                # Escape/click cancellation is a normal outcome. Connection
+                # errors also return 1, but provide an explanatory error.
+                error = selection.stderr.strip()
+                if not error or error.lower() in ('selection cancelled', 'selection canceled'):
+                    return None
+            raise RuntimeError(selection.stderr.strip() or 'Region selection failed')
+        geometry = selection.stdout.strip()
+        match = re.fullmatch(r'-?\d+,-?\d+ (\d+)x(\d+)', geometry)
+        if not match or int(match[1]) == 0 or int(match[2]) == 0:
+            raise RuntimeError('No valid screenshot region was selected')
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / ('Screenshot-' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S-%f') + '.png')
+    command = ['grim', '-t', 'png']
+    if geometry:
+        command.extend(['-g', geometry])
+    try:
+        result = subprocess.run([*command, str(path)], capture_output=True, text=True)
+        if result.returncode or not path.is_file() or not path.stat().st_size:
+            raise RuntimeError(result.stderr.strip() or 'Screenshot capture failed')
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    path.chmod(0o600)
+    with path.open('rb') as image:
+        copied = subprocess.run(['wl-copy', '--type', 'image/png'], stdin=image,
+                                capture_output=True)
+    if copied.returncode:
+        notify('Screenshot saved', str(path) + '\nClipboard copy failed.')
+    else:
+        notify('Screenshot saved and copied', str(path))
+    return path
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--full', action='store_true', help='Capture all displays instead of selecting a region')
+    args = parser.parse_args()
+    for tool in ['grim', 'wl-copy'] + ([] if args.full else ['slurp']):
+        if not shutil.which(tool):
+            raise RuntimeError('Missing ' + tool + '. Install: sudo pacman -S --needed grim slurp wl-clipboard')
+    runtime = Path(os.environ.get('XDG_RUNTIME_DIR', Path.home() / '.cache'))
+    runtime.mkdir(parents=True, exist_ok=True)
+    with (runtime / 'juarchy-screenshot.lock').open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        pictures = os.environ.get('XDG_PICTURES_DIR')
+        if not pictures and shutil.which('xdg-user-dir'):
+            result = subprocess.run(['xdg-user-dir', 'PICTURES'], capture_output=True, text=True)
+            pictures = result.stdout.strip() if result.returncode == 0 else None
+        directory = Path(os.environ.get('JUARCHY_SCREENSHOT_DIR') or
+                         str(Path(pictures or Path.home() / 'Pictures') / 'Screenshots')).expanduser()
+        path = screenshot(directory, args.full)
+        if path:
+            print(path)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, RuntimeError) as error:
+        print('Screenshot: ' + str(error), file=sys.stderr)
+        notify('Screenshot failed', str(error))
+        sys.exit(1)

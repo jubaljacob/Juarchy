@@ -87,20 +87,14 @@
         {
           "label": "Screenshot \u2014 select region",
           "command": [
-            "qs",
-            "-c",
-            "juarchy",
-            "ipc",
-            "call",
-            "picker",
-            "open"
+            "~/.local/bin/juarchy-screenshot"
           ]
         },
         {
           "label": "Screenshot \u2014 full screen",
           "command": [
-            "caelestia",
-            "screenshot"
+            "~/.local/bin/juarchy-screenshot",
+            "--full"
           ]
         },
         {
