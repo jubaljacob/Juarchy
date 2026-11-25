@@ -78,6 +78,10 @@ RowLayout {
             popouts.currentName = id.toLowerCase();
             popouts.currentCenter = (ch.item as Item).mapToItem(root, (ch.item as Item).implicitWidth / 2, 0).x ?? 0;
             popouts.hasCurrent = true;
+        } else if (id === "agents") {
+            popouts.currentName = id;
+            popouts.currentCenter = (ch.item as Item).mapToItem(root, (ch.item as Item).implicitWidth / 2, 0).x ?? 0;
+            popouts.hasCurrent = true;
         } else if (id !== "activeWindow" || !Config.bar.popouts.activeWindow || popouts.currentName !== "activewindow") {
             popouts.hasCurrent = false;
         }
@@ -163,6 +167,14 @@ RowLayout {
                 delegate: EntryWrapper {
                     Tray {
                         objectName: "taskbarTray"
+                    }
+                }
+            }
+            DelegateChoice {
+                roleValue: "agents"
+                delegate: EntryWrapper {
+                    AgentUsageBar {
+                        objectName: "taskbarAgents"
                     }
                 }
             }

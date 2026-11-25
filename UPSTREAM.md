@@ -34,3 +34,15 @@ until those dependencies are replaced together. The Juarchy entry point omits
 the upstream crash-report URL. Juarchy's privacy defaults remove automatic
 IP-location lookup, require consent for remote music artwork and visualisers,
 and use in-memory notification history unless longer retention is selected.
+
+## Omarchy themes and agent usage
+
+The theme palettes, preview images and wallpapers installed by
+`scripts/install-omarchy-themes.py` come from https://github.com/basecamp/omarchy
+(Copyright (c) David Heinemeier Hansson, MIT licence), pinned in that script and
+recorded with its licence in `~/.local/share/juarchy/omarchy-themes`. They are
+downloaded when installing, not stored here. Palette-to-scheme mapping, background
+switching and the usage collector are Juarchy's own code; the agent usage panel
+follows the design of Omarchy's `agents` plugin and the usage endpoints and
+app-server calls used by its collectors. The `shell/assets/agents/claude.svg` and
+`codex.svg` marks are copied from that plugin and remain the property of their owners.

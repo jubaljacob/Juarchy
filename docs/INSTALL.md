@@ -136,6 +136,13 @@ The optional `--profile intel-nvidia` installs workarounds for the original
 laptop. It is **not** required for all NVIDIA laptops; leave it off unless the
 hardware needs the specific fixes in [PORTABILITY.md](PORTABILITY.md).
 
+Optional: install the Omarchy themes (palettes and wallpapers, about 75 MB,
+downloaded from Omarchy's repository) to choose them in **Wallpaper & style**:
+
+```sh
+python scripts/install-omarchy-themes.py --apply
+```
+
 ## 5. Check and personalise
 
 ```sh
@@ -148,10 +155,15 @@ hyprctl configerrors
 - Hover at the top centre, then click the dash: dashboard and quick controls.
 - `Print Screen`: region screenshot; `Shift + Print Screen`: all displays.
 - `Super + Shift + W`: settings, wallpaper and appearance.
+- `Super + Shift + F`: file manager (Nautilus; quick-preview a file with the spacebar).
 - Test speakers, microphone, Wi-Fi, Bluetooth and brightness on this laptop.
 - Save your work, then test `Super + L` with **your Arch user's password**,
   followed by suspend/resume. Keep a working text-console login available
   during this first test.
+
+Make Nautilus the program that opens folders for Spotlight, links and other apps:
+`xdg-mime default org.gnome.Nautilus.desktop inode/directory`. (The installer leaves
+your existing default applications alone.)
 
 Choose your own weather location and privacy options in settings. Put your
 wallpapers in `~/Pictures/Wallpapers` and select one in Wallpaper & style.

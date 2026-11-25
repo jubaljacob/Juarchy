@@ -14,7 +14,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
 from jubal_launcher.terminal import run_removal
 from jubal_launcher.package_guidance import (
-    OFFICIAL_REPOS, FAMILIES, aur_metadata, build_label, clean, decorate, guidance,
+    OFFICIAL_REPOS, FAMILIES, aur_metadata, build_label, clean, contested_bases, decorate, guidance,
     repo_choices, repo_descriptions, suggested_arch_rows,
 )
 
@@ -226,7 +226,8 @@ def preview_package(source, target, build=False):
     repo, name = target.split("/", 1)
     choices = repo_choices(repository_rows())
     metadata, current = aur_metadata([name]) if repo == "aur" else ({}, False)
-    tags, reason, _ = guidance(target, choices, metadata, current)
+    contested = contested_bases(cached_aur()[1]) if source != "arch" else frozenset()
+    tags, reason, _ = guidance(target, choices, metadata, current, contested)
     print(target, flush=True)
     if build_label(target):
         print(build_label(target), flush=True)

@@ -43,7 +43,7 @@ def assess(installed, which=shutil.which, home=None, environ=None, uid=None):
                               ('caelestia-cli', (1, 1, 3))):
         if package in installed and version_tuple(installed[package]) != baseline:
             warnings.append(package + ' ' + installed[package] + ' differs from the tested baseline '
-                            + '.'.join(map(str, baseline)) + '; check shell startup and lock/unlock.')
+                            + '.'.join(map(str, baseline)) + '; check shell startup.')
     if not environ.get('HYPRLAND_INSTANCE_SIGNATURE'):
         warnings.append('No Hyprland session detected. Check graphics and shell startup after login.')
     return errors, warnings

@@ -79,6 +79,9 @@ Singleton {
     }
 
     function setMode(mode: string): void {
+        // An Omarchy theme is either light or dark; Caelestia has no scheme file to switch.
+        if (flavour === "omarchy")
+            return;
         Quickshell.execDetached(["caelestia", "scheme", "set", "--notify", "-m", mode]);
     }
 

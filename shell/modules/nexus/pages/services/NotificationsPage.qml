@@ -73,7 +73,7 @@ PageBase {
             last: true
             icon: "delete"
             text: Tr.tr("Erase notification history")
-            subtext: Tr.tr("Clear notifications and their saved images. Messages are hidden on the lock screen.")
+            subtext: Tr.tr("Clear notifications and their saved images.")
             onClicked: Notifs.clearHistory()
         }
 

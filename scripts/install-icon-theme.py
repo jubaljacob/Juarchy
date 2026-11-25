@@ -72,7 +72,7 @@ def main():
     subprocess.run(['gsettings', 'set', 'org.gnome.desktop.interface', 'icon-theme', theme_name], check=True)
     print(theme_name + ' installed and selected. Wallpaper colour changes will retain these icons.')
     print('Previous settings saved in:', backup)
-    print('Restart the file manager: thunar --quit; thunar')
+    print('Restart the file manager: nautilus --quit; nautilus')
 
 
 if __name__ == '__main__':

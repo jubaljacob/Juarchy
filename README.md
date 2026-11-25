@@ -28,7 +28,7 @@ options under **Services**, and set notification retention under
 **Services → Notifications**. Session-only history clears at logout or shell
 restart and erases older saved notification content and cached notification
 images. Longer retention offers 1, 7 or 30 days; an erase action clears history
-and its images immediately. Notification messages are hidden on the lock screen.
+and its images immediately.
 Saved history and privacy preferences are separate from theme and monitor settings.
 
 The dashboard notch is completely hidden at rest. Hovering over its top-centre
@@ -79,7 +79,7 @@ python ~/Projects/jubal-desktop/scripts/activate.py
 ```
 
 The switch backs up the existing files, installs an independent shell copy
-at `~/.config/quickshell/juarchy`, and routes startup, menu, lock, region
+at `~/.config/quickshell/juarchy`, and routes startup, menu, region
 screenshots, brightness and the audio repair helper to it. It preserves
 the computer's current Hyprland settings and personal additions. It checks
 session access before modifying files, waits for the original shell to stop,
@@ -208,6 +208,74 @@ The same presets can be managed with `juarchy-theme list`,
 terminal to record that brightness matching should be disabled. The settings
 UI restores this preference for future wallpaper selections; the command-line
 apply action restores the recorded wallpaper, mode and palette.
+
+### Omarchy themes
+
+Juarchy carries [Omarchy](https://github.com/basecamp/omarchy)'s 23 themes, each
+with its own palette and wallpapers. Choose one in **Wallpaper & style → Omarchy
+themes** and the wallpaper, the shell, GTK and Qt apps, terminals, Hyprland and
+the other themed apps all follow it. Moving between a theme's backgrounds (the
+**Next background** button, the thumbnails under the grid, or
+**Super + Ctrl + Space**) keeps the theme's colours, as in Omarchy.
+**Super + Shift + Ctrl + Space** switches to the next theme.
+
+The themes are downloaded from Omarchy (MIT licensed) at a pinned revision
+rather than stored in this repository:
+
+```sh
+python scripts/install-omarchy-themes.py           # preview
+python scripts/install-omarchy-themes.py --apply   # about 75 MB in ~/.local/share/juarchy
+```
+
+From a terminal:
+
+```sh
+juarchy-theme omarchy list
+juarchy-theme omarchy set tokyo-night --background 3-swirl-buck
+juarchy-theme omarchy next            # or prev
+juarchy-theme omarchy background next # or prev, or: set NAME_OR_IMAGE_PATH
+```
+
+Each theme's `colors.toml` becomes a complete Caelestia colour scheme: the
+background, text, accent and error colours are the theme's own, the 16 terminal
+colours use Omarchy's mapping unchanged, and the Material container and "on"
+colours are mixed from them and checked for readable contrast. Light themes
+(Catppuccin Latte, Flexoki Light, Lupine, Rosé Pine, White) switch the desktop to light mode, so
+the **Dark theme** switch is disabled while an Omarchy theme is active. Choose a
+scheme under **Colours**, or **Use wallpaper colours**, to leave Omarchy mode.
+Picking any image while a theme is active changes the wallpaper only.
+
+Add your own theme as `~/.config/juarchy/omarchy-themes/NAME/` with a
+`colors.toml` (the format is described in Omarchy's `docs/theming.md`) and a
+`backgrounds/` folder. Drop extra images for an existing theme into
+`~/.config/juarchy/omarchy-backgrounds/NAME/`. Intro videos and video
+backgrounds are not used.
+
+### Agent usage
+
+The bar shows Claude Code and Codex: each agent's mark and how much of its
+busiest limit window is spent. Hover for the panel, with the plan, the
+5-hour and weekly meters and their reset countdowns, any model-specific
+allowance, and what this computer spent today and over seven days (tokens,
+prompts, sessions, most-used model). Past 75% and 90% the figure warms and
+then turns urgent. An agent that is not installed or signed in says so in the
+panel. Hide the widget with `"enabled": false` for the `agents` entry in
+`~/.config/caelestia/shell.json`.
+
+Token and prompt counts are read from the agents' own session files and never
+leave the computer. **Limits** come from Anthropic's usage endpoint (using the
+sign-in Claude Code keeps) and from the Codex app-server, so they contact
+Anthropic and OpenAI and wait for consent: turn on **Settings → Services →
+Agent usage → Check Claude and Codex limits**. Sign-ins are only read, never
+rewritten or stored, and never appear in the output. Failed checks keep the last
+numbers marked as old; limits are re-checked about every five minutes (three
+when close to the limit), and the refresh button in the panel checks at once.
+
+```sh
+python ~/.local/bin/juarchy-agent-usage            # the JSON the bar reads
+python ~/.local/bin/juarchy-agent-usage --force    # check limits now
+python ~/.local/bin/juarchy-agent-usage --agent claude --no-limits
+```
 
 - `shell/`: shell QML, components, native plugin source, and upstream assets.
 - `home/.config/caelestia/shell.json`: bar layout and shell preferences.

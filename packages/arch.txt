@@ -19,6 +19,7 @@ hyprland
 hyprpolkitagent
 hyprsunset
 libnotify
+nautilus
 neovim
 network-manager-applet
 networkmanager
@@ -37,7 +38,7 @@ qt6-base
 qt6-declarative
 qt6-imageformats
 slurp
-thunar
+sushi
 tmux
 upower
 wireplumber

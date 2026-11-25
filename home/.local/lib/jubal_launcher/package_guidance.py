@@ -47,8 +47,90 @@ FAMILIES = (
      "aur_note": "Google's stable Chrome release, packaged by the AUR community.", "url": "https://www.google.com/chrome/"},
     {"app": "Spotify", "aliases": "spotify music", "arch": "spotify", "aur": "spotify", "roots": ("spotify",),
      "aur_note": "The standard stable Spotify desktop package.", "url": "https://www.spotify.com/"},
+    {"app": "Zen Browser", "aliases": "zen zen browser", "aur": "zen-browser-bin", "roots": ("zen-browser",),
+     "aur_note": "Repackages the stable release published by the Zen project on GitHub; "
+                 "Twilight, git and source builds are separate packages.", "url": "https://zen-browser.app/"},
+    # Each entry below was checked against its PKGBUILD: the stable package
+    # downloads the vendor's own release (or tagged source), not a third-party fork.
+    {"app": "Brave", "aliases": "brave browser", "aur": "brave-bin", "roots": ("brave",),
+     "aur_note": "Stable release downloaded from Brave's GitHub releases.", "url": "https://brave.com/"},
+    {"app": "Microsoft Edge", "aliases": "edge microsoft edge browser", "aur": "microsoft-edge-stable-bin",
+     "roots": ("microsoft-edge", "microsoft-edge-stable"),
+     "aur_note": "Stable channel package downloaded from packages.microsoft.com.", "url": "https://www.microsoft.com/edge"},
+    {"app": "Floorp", "aliases": "floorp browser", "aur": "floorp-bin", "roots": ("floorp",),
+     "aur_note": "Stable release downloaded from the Floorp project's GitHub releases.", "url": "https://floorp.app/"},
+    {"app": "Tor Browser", "aliases": "tor browser onion privacy", "aur": "tor-browser-bin", "roots": ("tor-browser",),
+     "aur_note": "Stable release downloaded from the Tor Project archive.", "url": "https://www.torproject.org/"},
+    {"app": "Mullvad Browser", "aliases": "mullvad browser privacy", "aur": "mullvad-browser-bin", "roots": ("mullvad-browser",),
+     "aur_note": "Stable release downloaded from dist.torproject.org.", "url": "https://mullvad.net/en/browser"},
+    {"app": "Slack", "aliases": "slack chat team", "aur": "slack-desktop", "roots": ("slack-desktop",),
+     "aur_note": "Stable release downloaded from Slack's download servers.", "url": "https://slack.com/downloads"},
+    {"app": "Zoom", "aliases": "zoom meetings video conferencing", "aur": "zoom", "roots": ("zoom",),
+     "aur_note": "Stable client downloaded from zoom.us.", "url": "https://zoom.us/"},
+    {"app": "ONLYOFFICE", "aliases": "onlyoffice desktop editors office suite", "aur": "onlyoffice-bin", "roots": ("onlyoffice",),
+     "aur_note": "Stable release downloaded from ONLYOFFICE's GitHub releases.", "url": "https://www.onlyoffice.com/"},
+    {"app": "1Password", "aliases": "1password password manager", "aur": "1password", "roots": ("1password",),
+     "aur_note": "Stable release downloaded from downloads.1password.com.", "url": "https://1password.com/"},
+    {"app": "Dropbox", "aliases": "dropbox sync cloud storage", "aur": "dropbox", "roots": ("dropbox",),
+     "aur_note": "Stable client downloaded from Dropbox's servers.", "url": "https://www.dropbox.com/"},
+    {"app": "Postman", "aliases": "postman api client", "aur": "postman-bin", "roots": ("postman",),
+     "aur_note": "Stable release downloaded from Postman's download server.", "url": "https://www.postman.com/"},
+    {"app": "Insomnia", "aliases": "insomnia api client rest", "aur": "insomnia-bin", "roots": ("insomnia",),
+     "aur_note": "Stable release downloaded from Kong's Insomnia GitHub releases.", "url": "https://insomnia.rest/"},
+    {"app": "Android Studio", "aliases": "android studio ide", "aur": "android-studio", "roots": ("android-studio",),
+     "aur_note": "Stable release downloaded from dl.google.com.", "url": "https://developer.android.com/studio"},
+    {"app": "JetBrains Toolbox", "aliases": "jetbrains toolbox ide manager", "aur": "jetbrains-toolbox",
+     "roots": ("jetbrains-toolbox",),
+     "aur_note": "Stable release downloaded from download.jetbrains.com.", "url": "https://www.jetbrains.com/toolbox-app/"},
+    {"app": "Cursor", "aliases": "cursor ai code editor", "aur": "cursor-bin", "roots": ("cursor-bin",),
+     "aur_note": "Stable release downloaded from downloads.cursor.com.", "url": "https://www.cursor.com/"},
+    {"app": "Sublime Text", "aliases": "sublime text editor", "aur": "sublime-text-4", "roots": ("sublime-text-4", "sublime-text"),
+     "aur_note": "Stable build downloaded from download.sublimetext.com.", "url": "https://www.sublimetext.com/"},
+    {"app": "Mullvad VPN", "aliases": "mullvad vpn", "aur": "mullvad-vpn-bin", "roots": ("mullvad-vpn",),
+     "aur_note": "Stable release downloaded from Mullvad's GitHub releases.", "url": "https://mullvad.net/"},
+    {"app": "NordVPN", "aliases": "nordvpn vpn", "aur": "nordvpn-bin", "roots": ("nordvpn",),
+     "aur_note": "Stable release downloaded from repo.nordvpn.com.", "url": "https://nordvpn.com/download/linux/"},
+    {"app": "Minecraft Launcher", "aliases": "minecraft launcher mojang game", "aur": "minecraft-launcher",
+     "roots": ("minecraft-launcher",),
+     "aur_note": "Official launcher downloaded from Mojang.", "url": "https://www.minecraft.net/"},
+    {"app": "TeamViewer", "aliases": "teamviewer remote desktop", "aur": "teamviewer", "roots": ("teamviewer",),
+     "aur_note": "Stable release downloaded from dl.teamviewer.com.", "url": "https://www.teamviewer.com/"},
+    {"app": "AnyDesk", "aliases": "anydesk remote desktop", "aur": "anydesk-bin", "roots": ("anydesk",),
+     "aur_note": "Stable release downloaded from download.anydesk.com.", "url": "https://anydesk.com/"},
+    {"app": "Ventoy", "aliases": "ventoy bootable usb", "aur": "ventoy-bin", "roots": ("ventoy",),
+     "aur_note": "Stable release downloaded from Ventoy's GitHub releases.", "url": "https://www.ventoy.net/"},
+    {"app": "Heroic Games Launcher", "aliases": "heroic games launcher epic gog", "aur": "heroic-games-launcher-bin",
+     "roots": ("heroic-games-launcher",),
+     "aur_note": "Stable release downloaded from the Heroic project's GitHub releases.", "url": "https://heroicgameslauncher.com/"},
+    {"app": "balenaEtcher", "aliases": "balena etcher flash usb images", "aur": "balena-etcher", "roots": ("balena-etcher",),
+     "aur_note": "Built from the tagged stable source of balena-io/etcher on GitHub.", "url": "https://etcher.balena.io/"},
 )
 VARIANT_SUFFIX = re.compile(r"(?:-(?:bin|git|svn|hg|bzr|cvs|darcs|beta|alpha|nightly|dev|canary|insiders|rc|stable|oss|esr))+")
+VARIANT_TAIL = re.compile(VARIANT_SUFFIX.pattern + r"\Z")
+
+
+@lru_cache(maxsize=131072)
+def base_name(name):
+    """Package name without trailing build-variant suffixes: htop-git -> htop."""
+    match = VARIANT_TAIL.search(name)
+    return name[:match.start()] if match and match.start() else name
+
+
+def contested_bases(names):
+    """Names that AUR packages offer build variants of, e.g. {'htop'} for htop-git."""
+    return frozenset(base for name in names if (base := base_name(name)) != name)
+
+
+def implicit_family(name, choices, contested):
+    """An Arch repository app that the AUR also offers variants of needs no curated entry.
+
+    The stable repository build is then the recommended one, and the AUR
+    variants point to it. Apps nobody builds variants of are left untagged.
+    """
+    base = base_name(name)
+    if base in contested and base in choices:
+        return {"app": base, "arch": base}
+    return None
 
 
 def clean(value):
@@ -159,9 +241,9 @@ def aur_metadata(names, refresh=False):
         return {n: records[n] for n in names if n in records}, current
 
 
-def guidance(target, choices, metadata=None, metadata_current=False):
+def guidance(target, choices, metadata=None, metadata_current=False, contested=frozenset()):
     repo, name = target.split("/", 1)
-    family = family_for(name)
+    family = family_for(name) or implicit_family(name, choices, contested)
     channel = variant(name, repo)
     tags = [channel]
     reason = ""
@@ -173,7 +255,7 @@ def guidance(target, choices, metadata=None, metadata_current=False):
         tags.append("AUR community")
     else:
         tags.append("Configured repository")
-    preferred = choices.get(family["arch"]) if family else None
+    preferred = choices.get(family.get("arch")) if family else None
     if family and channel == "Stable":
         if preferred == target:
             recommended = True
@@ -215,37 +297,39 @@ def build_label(target):
 
 def decorate(rows, choices, descriptions=None, metadata=None, metadata_current=False):
     decorated = []
-    for row in rows:
-        target = row.split()[0]
+    targets = [row.split()[0] for row in rows]
+    contested = contested_bases(t.split("/", 1)[1] for t in targets if t.startswith("aur/"))
+    for row, target in zip(rows, targets):
         repo, name = target.split("/", 1)
-        family = family_for(name)
-        tags, reason, recommended = guidance(target, choices, metadata, metadata_current)
+        curated = family_for(name)
+        family = curated or implicit_family(name, choices, contested)
+        tags, reason, recommended = guidance(target, choices, metadata, metadata_current, contested)
         if "[installed]" in row:
             tags.append("Installed")
         detail = (descriptions or {}).get(target, "")
         if repo == "aur":
             detail = clean((metadata or {}).get(name, {}).get("Description", "")) or detail
         # The searchable text includes human names and aliases, but not badges.
-        search = clean(" ".join(filter(None, [build_label(target), family["aliases"] if family else "", detail])))
+        search = clean(" ".join(filter(None, [build_label(target), (family or {}).get("aliases", ""), detail])))
         if not search:
             search = name
         label = build_label(target)
         display = target + "\t" + (label + " · " if label else "") + " ".join(f"[{t}]" for t in tags) + "\t" + search
         channel = variant(name, repo)
         if recommended:
-            rank = 0
+            rank = 0 if curated else 1  # Curated picks lead; derived Arch picks follow.
         elif channel in ("Development", "Preview", "Testing repository"):
-            rank = 3
+            rank = 4
         elif family and channel == "Stable":
-            rank = 1  # Main stable app before plugins and unrelated matches.
+            rank = 2  # Main stable app before plugins and unrelated matches.
         else:
-            rank = 2
+            rank = 3
         decorated.append(((rank, target), display))
     return [row for _, row in sorted(decorated)]
 
 
 def suggested_arch_rows(choices, aur_names):
     """Offer each app's Arch choice inside AUR searches without hiding variants."""
-    available = {family["arch"] for name in aur_names if (family := family_for(name))}
+    available = {arch for name in aur_names if (family := family_for(name)) and (arch := family.get("arch"))}
     return [choices[f["arch"]] for f in FAMILIES
-            if f["arch"] in choices and f["arch"] in available]
+            if f.get("arch") in choices and f["arch"] in available]

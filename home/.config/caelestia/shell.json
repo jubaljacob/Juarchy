@@ -30,6 +30,10 @@
             },
             {
                 "enabled": true,
+                "id": "agents"
+            },
+            {
+                "enabled": true,
                 "id": "tray"
             },
             {
@@ -101,6 +105,25 @@
     "dashboard": {
         "showClockSeconds": true,
         "showOnHover": true
+    },
+    "general": {
+        "apps": {
+            "explorer": ["nautilus", "--new-window"]
+        },
+        "idle": {
+            "lockBeforeSleep": false,
+            "timeouts": [
+                {
+                    "timeout": 300,
+                    "idleAction": "dpms off",
+                    "returnAction": "dpms on"
+                },
+                {
+                    "timeout": 600,
+                    "idleAction": ["suspendThenHibernate"]
+                }
+            ]
+        }
     },
     "utilities": {
         "enabled": false

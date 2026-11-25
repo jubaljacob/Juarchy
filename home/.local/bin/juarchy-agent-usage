@@ -1,0 +1,944 @@
+#!/usr/bin/env python3
+"""Claude Code and Codex usage for the Juarchy bar: plan, limits and token counts.
+
+Prints one JSON document and keeps each agent's record in
+~/.local/state/juarchy/agents/usage/<agent>.json.  Limits come from the
+agents' own services, using the sign-in each CLI already keeps:
+
+  claude  Anthropic's OAuth usage endpoint (5-hour and weekly windows)
+  codex   the Codex CLI's app-server (account/rateLimits/read)
+
+Token and prompt counts come from the session files those CLIs write on this
+machine.  Credentials are only read, never rewritten, and never printed.
+Limit checks contact Anthropic and OpenAI, so they only run once
+"agentUsageLimits" is true in ~/.config/juarchy/privacy.json (Settings →
+Services → Agent usage), and never with --no-limits.  Local counts always work.
+"""
+import argparse
+import concurrent.futures
+import datetime as dt
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import select
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+sys.dont_write_bytecode = True
+
+SCHEMA_VERSION = 1
+CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
+USER_AGENT = 'juarchy-agent-usage/1'
+
+LIMITS_SECONDS = 300           # how long a limits answer stands in for a probe
+LIMITS_NEAR_SECONDS = 180      # ... when a window is nearly spent
+RETRY_TRANSPORT_SECONDS = 60   # retry sooner when nothing could be reached
+RATE_LIMITED_CURRENT_SECONDS = 900  # a 429 only says "later": recent numbers still stand
+NEAR_LIMIT = 0.9
+SCAN_DAYS = 30
+STATS_DAYS = 7
+
+
+# ------------------------------------------------------------------ helpers
+
+def now_ms():
+    return int(time.time() * 1000)
+
+
+def home():
+    return Path(os.environ.get('HOME') or Path.home())
+
+
+def xdg(variable, fallback):
+    return Path(os.environ.get(variable) or home() / fallback)
+
+
+def state_dir():
+    return xdg('XDG_STATE_HOME', '.local/state') / 'juarchy/agents/usage'
+
+
+def cache_dir():
+    return xdg('XDG_CACHE_HOME', '.cache') / 'juarchy/agent-usage'
+
+
+def read_json(path):
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_json(path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(dir=path.parent, prefix='.tmp-')
+    try:
+        with os.fdopen(handle, 'w', encoding='utf-8') as stream:
+            json.dump(data, stream)
+        os.replace(temporary, path)
+    except OSError:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def number(value, default=0):
+    """A finite number from untrusted input; booleans and junk give the default."""
+    if isinstance(value, bool):
+        return default
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    return result if math.isfinite(result) else default
+
+
+def tokens(value):
+    return max(0, int(number(value)))
+
+
+def iso(moment):
+    return moment.astimezone(dt.timezone.utc).isoformat()
+
+
+def local_day(stamp):
+    """Local calendar date (yyyy-mm-dd) of an ISO string or epoch; None if unusable."""
+    try:
+        if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+            seconds = stamp / 1000 if stamp > 1e11 else stamp
+            return dt.datetime.fromtimestamp(seconds).date().isoformat()
+        text = str(stamp).strip()
+        if not text:
+            return None
+        parsed = dt.datetime.fromisoformat(text.replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed.astimezone().date().isoformat()
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def reset_iso(value):
+    """An ISO reset time from an ISO string or epoch seconds/milliseconds, else ''."""
+    if value in (None, ''):
+        return ''
+    try:
+        if isinstance(value, (int, float)) and not isinstance(value, bool) or str(value).strip().isdigit():
+            seconds = float(value)
+            seconds = seconds / 1000 if seconds > 1e11 else seconds
+            return iso(dt.datetime.fromtimestamp(seconds, dt.timezone.utc)) if seconds > 0 else ''
+        return iso(dt.datetime.fromisoformat(str(value).strip().replace('Z', '+00:00')))
+    except (ValueError, OverflowError, OSError):
+        return ''
+
+
+def short_hash(*parts):
+    return hashlib.sha256('\0'.join(str(part) for part in parts).encode()).hexdigest()[:12]
+
+
+def privacy_allows_limits():
+    """Limit checks contact Anthropic and OpenAI, so they wait for consent like Juarchy's other network features."""
+    return read_json(xdg('XDG_CONFIG_HOME', '.config') / 'juarchy/privacy.json').get('agentUsageLimits') is True
+
+
+# ------------------------------------------------------------------ network
+
+class HttpError(Exception):
+    def __init__(self, status=0, headers=None, transport=False):
+        super().__init__(status)
+        self.status = status
+        self.headers = headers
+        self.transport = transport
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None  # A credential must never follow a redirect to another host.
+
+
+def fetch_json(request, timeout=10):
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            body = response.read(2_000_000)
+    except urllib.error.HTTPError as error:
+        raise HttpError(status=error.code, headers=error.headers) from None
+    except (urllib.error.URLError, OSError, TimeoutError):
+        raise HttpError(transport=True) from None
+    try:
+        return json.loads(body)
+    except ValueError:
+        raise HttpError(status=-1) from None
+
+
+# ------------------------------------------------------------------ limits cache
+
+def settle(limits, now=None):
+    """Windows whose reset time has passed read as untouched, not as unknown."""
+    now = now_ms() if now is None else now
+    settled = []
+    for window in limits:
+        window = dict(window)
+        reset = window.get('resetsAt') or ''
+        try:
+            gone = reset and dt.datetime.fromisoformat(reset).timestamp() * 1000 <= now
+        except ValueError:
+            gone = False
+        if gone:
+            window['percent'] = 0
+            window['resetsAt'] = ''
+        settled.append(window)
+    return settled
+
+
+class LimitsCache:
+    """One account's last good limits, so a failed check never blanks the panel."""
+
+    def __init__(self, agent, key):
+        self.path = cache_dir() / ('%s-limits-%s.json' % (agent, key))
+        self.data = read_json(self.path)
+
+    @property
+    def limits(self):
+        return [w for w in self.data.get('limits', []) if isinstance(w, dict)]
+
+    @property
+    def fetched(self):
+        return int(number(self.data.get('fetchedAtMs')))
+
+    def due(self, force, now=None):
+        if force:
+            return True
+        now = now_ms() if now is None else now
+        near = any(number(w.get('percent')) >= NEAR_LIMIT for w in self.limits)
+        wait = RETRY_TRANSPORT_SECONDS if self.data.get('failure') == 'transport' \
+            else (LIMITS_NEAR_SECONDS if near else LIMITS_SECONDS)
+        last = max(self.fetched, int(number(self.data.get('attemptedAtMs'))))
+        return not 0 <= now - last < wait * 1000  # A clock that went back probes again.
+
+    def succeeded(self, limits, **extra):
+        stamp = now_ms()
+        self.data = dict(extra, limits=limits, fetchedAtMs=stamp, attemptedAtMs=stamp, failure='')
+        self._save()
+        return stamp
+
+    def failed(self, kind):
+        self.data = dict(self.data, attemptedAtMs=now_ms(), failure=kind)
+        self._save()
+
+    def _save(self):
+        try:
+            write_json(self.path, self.data)
+        except OSError:
+            pass
+
+
+# ------------------------------------------------------------------ records
+
+def blank_stats():
+    return {'hasLocal': False, 'todayTokens': 0, 'todayPrompts': 0, 'todaySessions': 0,
+            'weekTokens': 0, 'weekPrompts': 0, 'topModel': '', 'topModelTokens': 0,
+            'models': [], 'recentDays': [], 'busiestDay': None}
+
+
+def base_record(agent, name):
+    return {'schemaVersion': SCHEMA_VERSION, 'id': agent, 'name': name, 'updatedAt': iso(dt.datetime.now(dt.timezone.utc)),
+            'ready': False, 'installed': False, 'tierLabel': '', 'usageStatusText': '', 'authHelpText': '',
+            'limits': [], 'limitsStale': False, 'limitsFetchedAt': 0, 'retryAdvised': False,
+            'stats': blank_stats()}
+
+
+def model_label(model):
+    """claude-sonnet-4-5-20250929 -> Sonnet 4.5; other ids are shown as given."""
+    text = str(model or '')
+    match = re.match(r'^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$', text)
+    if match:
+        family, major, minor = match.groups()
+        return '%s %s%s' % (family.capitalize(), major, '.' + minor if minor else '')
+    return text or 'unknown'
+
+
+class Stats:
+    """Per-day, per-model token totals and typed prompts, as the bar shows them."""
+
+    def __init__(self, today=None):
+        self.today = today or dt.date.today().isoformat()
+        self.days = [(dt.date.fromisoformat(self.today) - dt.timedelta(days=offset)).isoformat()
+                     for offset in range(STATS_DAYS - 1, -1, -1)]
+        self.tokens = {}
+        self.prompts = {}
+        self.models = {}
+        self.sessions = {}
+        self.seen = False
+
+    def add(self, day, session, model, total):
+        if total <= 0 or day not in self.days:
+            self.seen = self.seen or total > 0
+            return
+        self.seen = True
+        self.tokens[day] = self.tokens.get(day, 0) + total
+        self.models[model] = self.models.get(model, 0) + total
+        self.sessions.setdefault(day, set()).add(session)
+
+    def add_prompt(self, day, session):
+        self.seen = True
+        if day in self.days:
+            self.prompts[day] = self.prompts.get(day, 0) + 1
+            self.sessions.setdefault(day, set()).add(session)
+
+    def snapshot(self, label=model_label):
+        ranked = sorted(self.models.items(), key=lambda item: -item[1])
+        recent = [{'date': day, 'tokens': self.tokens.get(day, 0), 'prompts': self.prompts.get(day, 0)} for day in self.days]
+        busiest = max(recent, key=lambda day: day['tokens'])
+        return {
+            'hasLocal': self.seen,
+            'todayTokens': self.tokens.get(self.today, 0),
+            'todayPrompts': self.prompts.get(self.today, 0),
+            'todaySessions': len(self.sessions.get(self.today, ())),
+            'weekTokens': sum(self.tokens.values()),
+            'weekPrompts': sum(self.prompts.values()),
+            'topModel': label(ranked[0][0]) if ranked else '',
+            'topModelTokens': ranked[0][1] if ranked else 0,
+            'models': [{'model': model, 'label': label(model), 'tokens': value} for model, value in ranked[:5]],
+            'recentDays': recent,
+            'busiestDay': dict(busiest) if busiest['tokens'] > 0 else None,
+        }
+
+
+class FileIndex:
+    """Per-file parse results, so a rescan only reads transcripts that changed."""
+
+    def __init__(self, name, version):
+        self.path = cache_dir() / ('%s-index.json' % name)
+        loaded = read_json(self.path)
+        self.files = loaded.get('files', {}) if loaded.get('version') == version else {}
+        self.version = version
+        self.dirty = False
+
+    def entries(self, paths, parse):
+        wanted = {}
+        for path in paths:
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            key = str(path)
+            stamp = [info.st_mtime_ns, info.st_size]
+            held = self.files.get(key)
+            if not held or held.get('stamp') != stamp:
+                try:
+                    held = {'stamp': stamp, 'data': parse(path)}
+                except OSError:
+                    continue
+                self.dirty = True
+            wanted[key] = held
+        if set(wanted) != set(self.files):
+            self.dirty = True
+        self.files = wanted
+        return [entry['data'] for entry in wanted.values()]
+
+    def save(self):
+        if self.dirty:
+            try:
+                write_json(self.path, {'version': self.version, 'files': self.files})
+            except OSError:
+                pass
+
+
+def recent_files(root, pattern):
+    cutoff = time.time() - SCAN_DAYS * 86400
+    found = []
+    try:
+        for path in Path(root).glob(pattern):
+            try:
+                if path.is_file() and path.stat().st_mtime >= cutoff:
+                    found.append(path)
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return found
+
+
+def jsonl(path):
+    with open(path, encoding='utf-8', errors='replace') as stream:
+        for line in stream:
+            if line.lstrip().startswith('{'):
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(entry, dict):
+                    yield entry
+
+
+def obj(value):
+    return value if isinstance(value, dict) else {}
+
+
+# ------------------------------------------------------------------ Claude Code
+
+def claude_dir():
+    configured = os.environ.get('CLAUDE_CONFIG_DIR')
+    return Path(configured).expanduser() if configured else home() / '.claude'
+
+
+def claude_profile(directory):
+    """The CLI's profile file: legacy .config.json, ~/.claude.json, or <dir>/.claude.json."""
+    legacy = directory / '.config.json'
+    if legacy.exists():
+        return legacy
+    if directory == home() / '.claude' and not os.environ.get('CLAUDE_CONFIG_DIR'):
+        return home() / '.claude.json'
+    return directory / '.claude.json'
+
+
+def plan_label(tier, subscription):
+    """Lead with the subscription and keep a Max multiplier as its qualifier."""
+    plan = subscription[:1].upper() + subscription[1:] if subscription else ''
+    match = re.search(r'max_(\d+x)', tier or '', re.IGNORECASE)
+    return (plan or 'Max') + ' ' + match.group(1) if match else plan
+
+
+def claude_login(directory):
+    """(access token, expiry ms, refresh expiry ms, plan, account key); empty when signed out."""
+    login = read_json(directory / '.credentials.json').get('claudeAiOauth')
+    if not isinstance(login, dict) or not login.get('accessToken'):
+        return '', 0, 0, '', 'default'
+    account = obj(read_json(claude_profile(directory)).get('oauthAccount'))
+    tier = next((str(account[key]) for key in ('userRateLimitTier', 'organizationRateLimitTier') if account.get(key)), '')
+    if not re.search(r'max_(\d+x)', tier, re.IGNORECASE):
+        tier = str(login.get('rateLimitTier') or '')
+    plan = plan_label(tier, str(login.get('subscriptionType') or ''))
+    identity = account.get('accountUuid') or account.get('emailAddress') or 'default'
+    return (str(login['accessToken']), int(number(login.get('expiresAt'))),
+            int(number(login.get('refreshTokenExpiresAt'))), plan, short_hash('claude', identity))
+
+
+def percent_used(value):
+    """Anthropic answers percentages (0.6 means 0.6%), so scale to 0..1."""
+    number_ = number(str(value).strip().replace('%', ''), -1)
+    return -1 if number_ < 0 else min(1.0, number_ / 100)
+
+
+def window_kind(text):
+    text = str(text).lower()
+    if 'month' in text:
+        return 'Monthly'
+    if 'week' in text or 'day' in text:
+        return 'Weekly'
+    if 'hour' in text or 'session' in text:
+        return 'Session'
+    return ''
+
+
+def parse_claude_limits(payload):
+    limits = []
+    for key, label, title in (('five_hour', 'Session (5-hour)', 'Session'), ('seven_day', 'Weekly (7-day)', 'Weekly')):
+        bucket = obj(payload.get(key))
+        percent = percent_used(bucket.get('utilization'))
+        if bucket and percent >= 0:
+            limits.append({'label': label, 'title': title, 'percent': percent, 'resetsAt': reset_iso(bucket.get('resets_at'))})
+    # A model's own allowance only appears in the `limits` array.
+    seen = set()
+    for entry in payload.get('limits') if isinstance(payload.get('limits'), list) else []:
+        entry = obj(entry)
+        model = obj(obj(entry.get('scope')).get('model'))
+        name = str(model.get('display_name') or model.get('id') or '').strip()
+        kind = str(entry.get('kind') or '').strip()
+        percent = percent_used(entry.get('percent'))
+        if not name or (name, kind) in seen or percent < 0:
+            continue
+        seen.add((name, kind))
+        span = window_kind(kind)
+        title = '%s %s' % (name, span) if span else name
+        limits.append({'label': title, 'title': title, 'percent': percent,
+                       'resetsAt': reset_iso(entry.get('resets_at')), 'scoped': True})
+    return limits
+
+
+def probe_claude(token):
+    request = urllib.request.Request(CLAUDE_USAGE_URL, headers={
+        'Authorization': 'Bearer ' + token, 'anthropic-beta': 'oauth-2025-04-20',
+        'Accept': 'application/json', 'User-Agent': USER_AGENT})
+    try:
+        payload = fetch_json(request)
+    except HttpError as error:
+        if error.transport:
+            return {'ok': False, 'kind': 'transport',
+                    'help': "Couldn't reach Anthropic's usage endpoint. Retrying shortly. Local counts are still shown."}
+        if error.status == 429:
+            return {'ok': False, 'kind': 'rate', 'help': "Anthropic's usage endpoint is rate limiting checks right now. Local counts are still shown."}
+        if error.status in (401, 403):
+            return {'ok': False, 'kind': 'refused',
+                    'help': "Anthropic refused Claude Code's sign-in. Start Claude Code, or run `claude auth login`, to sign in again."}
+        return {'ok': False, 'kind': 'other',
+                'help': "Anthropic's usage endpoint returned %s. Local counts are still shown." %
+                        ('an invalid answer' if error.status < 0 else 'status %d' % error.status)}
+    limits = parse_claude_limits(payload if isinstance(payload, dict) else {})
+    if not limits:
+        return {'ok': False, 'kind': 'other', 'help': "Anthropic's usage endpoint returned no limits. Local counts are still shown."}
+    return {'ok': True, 'limits': limits}
+
+
+# What Claude Code writes for its own bookkeeping, which a person never typed.
+MACHINE_PROMPTS = ('<command-name>', '<command-message>', '<local-command', '<system-reminder>', 'Caveat:',
+                   '[Request interrupted', '<task-notification>')
+
+
+def typed_claude_prompt(line):
+    if line.get('isMeta') or line.get('isSidechain') or line.get('isCompactSummary') or line.get('type') != 'user':
+        return False
+    content = obj(line.get('message')).get('content')
+    if isinstance(content, list):
+        blocks = [block for block in content if isinstance(block, dict)]
+        if not blocks or any(block.get('type') == 'tool_result' for block in blocks):
+            return False
+        content = next((str(block.get('text') or '') for block in blocks if block.get('type') == 'text'), '')
+    if not isinstance(content, str):
+        return False
+    return not content.lstrip().startswith(MACHINE_PROMPTS)
+
+
+def parse_claude_transcript(path):
+    """Replies once each (message and request id) and the prompts a person typed."""
+    replies, prompts = {}, []
+    for number_, line in enumerate(jsonl(path)):
+        session = str(line.get('sessionId') or path)
+        day = local_day(line.get('timestamp'))
+        if typed_claude_prompt(line):
+            if day:
+                prompts.append([day, session])
+            continue
+        message = obj(line.get('message'))
+        usage = message.get('usage')
+        if line.get('type') != 'assistant' or not isinstance(usage, dict) or not day:
+            continue
+        model = str(message.get('model') or 'claude')
+        if model.startswith('<'):  # <synthetic>: Claude Code's own placeholder replies
+            continue
+        counts = [tokens(usage.get(field)) for field in
+                  ('input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens')]
+        if sum(counts) <= 0:
+            continue
+        identity = str(message.get('id') or '')
+        key = '%s:%s' % (identity, line.get('requestId') or '') if identity else '%s:%s' % (path, line.get('uuid') or number_)
+        held = replies.get(key)
+        if held is None or counts[1] >= held[3]:  # A streamed reply is rewritten as it grows.
+            replies[key] = [model, day, session, counts[1], sum(counts)]
+    return {'replies': replies, 'prompts': prompts}
+
+
+def claude_stats(directory, today=None):
+    index = FileIndex('claude', 1)
+    parsed = index.entries(recent_files(directory / 'projects', '**/*.jsonl'), parse_claude_transcript)
+    index.save()
+    stats = Stats(today)
+    replies = {}
+    for entry in parsed:  # A resumed or forked session copies replies into another transcript.
+        for key, reply in entry['replies'].items():
+            if key not in replies or reply[3] >= replies[key][3]:
+                replies[key] = reply
+    for model, day, session, _, total in replies.values():
+        stats.add(day, session, model, total)
+    for entry in parsed:
+        for day, session in entry['prompts']:
+            stats.add_prompt(day, session)
+    return stats.snapshot()
+
+
+def collect_claude(force=False, limits=True):
+    directory = claude_dir()
+    record = base_record('claude', 'Claude Code')
+    record['installed'] = bool(shutil.which('claude')) or directory.is_dir()
+    token, expires, refresh_expires, plan, key = claude_login(directory)
+    record['stats'] = claude_stats(directory)
+    record['ready'] = bool(token) or record['stats']['hasLocal']
+    record['tierLabel'] = plan
+    if not token:
+        if record['ready']:
+            record['usageStatusText'] = 'Waiting for auth'
+            record['authHelpText'] = 'Sign in to Claude Code with `claude auth login` to see your limits.'
+        return record
+    cache = LimitsCache('claude', key)
+    fallback = settle(cache.limits)
+    record['limits'], record['limitsFetchedAt'] = fallback, cache.fetched
+    record['limitsStale'] = bool(fallback)
+    if not limits:
+        record['usageStatusText'], record['authHelpText'] = 'Limits off', 'Turn limit checks on in Settings → Services → Agent usage.'
+        record['limits'], record['limitsStale'] = [], False
+        return record
+    if expires and expires <= now_ms():
+        # An access token lasts hours; the CLI mints a new one the next time it runs.
+        if refresh_expires > now_ms():
+            record['usageStatusText'] = 'Limits paused'
+            record['authHelpText'] = "Claude Code's access token has lapsed. Start Claude Code to refresh it; signing in again is not needed."
+        else:
+            record['usageStatusText'] = 'Sign-in expired'
+            record['authHelpText'] = "Claude Code's saved sign-in expired. Start Claude Code, or run `claude auth login`, to refresh it."
+        return record
+    if not cache.due(force):
+        record['limitsStale'] = False
+        return record
+    probe = probe_claude(token)
+    if probe['ok']:
+        record['limitsFetchedAt'] = cache.succeeded(probe['limits'])
+        record['limits'], record['limitsStale'] = probe['limits'], False
+        return record
+    cache.failed(probe['kind'])
+    record['retryAdvised'] = probe['kind'] == 'transport'
+    record['authHelpText'] = probe['help']
+    current = probe['kind'] == 'rate' and now_ms() - cache.fetched < RATE_LIMITED_CURRENT_SECONDS * 1000
+    record['limitsStale'] = bool(fallback) and not current
+    if not fallback:
+        record['usageStatusText'] = 'Claude limits unavailable'
+    if probe['kind'] == 'refused':
+        record['usageStatusText'] = 'Sign-in expired'
+    return record
+
+
+# ------------------------------------------------------------------ Codex
+
+CODEX_PLANS = {
+    'free': 'Free', 'go': 'Go', 'plus': 'Plus', 'pro': 'Pro 200', 'prolite': 'Pro 100', 'promax': 'Pro 500',
+    'team': 'Business', 'self_serve_business_usage_based': 'Business', 'self_serve_business_prolite': 'Business Premium',
+    'business': 'Enterprise', 'enterprise': 'Enterprise', 'edu': 'Edu',
+}
+
+
+def codex_home():
+    configured = os.environ.get('CODEX_HOME')
+    return Path(configured).expanduser() if configured else home() / '.codex'
+
+
+def find_codex():
+    found = shutil.which('codex')
+    if found:
+        return found
+    for candidate in (home() / '.local/bin/codex', home() / '.npm-global/bin/codex', home() / '.cargo/bin/codex',
+                      Path('/usr/local/bin/codex'), Path('/usr/bin/codex')):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return ''
+
+
+def codex_login(directory):
+    """('chatgpt' | 'apikey' | '', account key) from the CLI's auth.json."""
+    if os.environ.get('CODEX_ACCESS_TOKEN'):
+        return 'chatgpt', 'env'
+    auth = read_json(directory / 'auth.json')
+    tokens_ = obj(auth.get('tokens'))
+    if tokens_.get('access_token') or tokens_.get('id_token'):
+        return 'chatgpt', short_hash('codex', tokens_.get('account_id') or 'default')
+    if auth.get('OPENAI_API_KEY'):
+        return 'apikey', 'apikey'
+    return '', 'default'
+
+
+def rpc_send(process, payload):
+    try:
+        process.stdin.write(json.dumps(payload) + '\n')
+        process.stdin.flush()
+    except OSError as error:
+        raise RuntimeError('Codex app-server exited') from error
+
+
+def rpc_request(process, request_id, method, params=None, timeout=8):
+    """One JSON-RPC call; reads the raw fd so a reply batched with notifications is not lost."""
+    rpc_send(process, {'id': request_id, 'method': method, 'params': params or {}})
+    descriptor = process.stdout.fileno()
+    pending = getattr(process, '_pending', b'')
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            while b'\n' in pending:
+                line, pending = pending.split(b'\n', 1)
+                try:
+                    message = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(message, dict) and message.get('id') == request_id:
+                    return message
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            ready, _, _ = select.select([descriptor], [], [], min(0.25, remaining))
+            if not ready:
+                if process.poll() is not None:
+                    raise RuntimeError('Codex app-server exited')
+                continue
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                raise RuntimeError('Codex app-server exited')
+            pending += chunk
+    finally:
+        process._pending = pending
+    raise TimeoutError('Codex app-server did not answer %s' % method)
+
+
+def codex_window(window):
+    window = obj(window)
+    used = window.get('usedPercent')
+    if isinstance(used, bool) or not isinstance(used, (int, float)) or not math.isfinite(used):
+        return None
+    minutes = int(number(window.get('windowDurationMins')))
+    if minutes >= 28 * 1440:
+        label, title = 'Monthly', 'Monthly'
+    elif minutes == 10080:
+        label, title = 'Weekly (7-day)', 'Weekly'
+    elif minutes >= 1440:
+        label, title = '%d-day window' % (minutes // 1440), 'Weekly'
+    elif minutes and minutes % 60 == 0:
+        label, title = ('Session (%d-hour)' % (minutes // 60)), 'Session'
+    elif minutes:
+        label, title = '%d-minute window' % minutes, 'Session'
+    else:
+        label, title = 'Limit', ''
+    return {'label': label, 'title': title or label, 'percent': max(0.0, min(1.0, used / 100)),
+            'resetsAt': reset_iso(window.get('resetsAt')), 'minutes': minutes}
+
+
+def codex_buckets(result):
+    buckets = result.get('rateLimitsByLimitId')
+    if isinstance(buckets, dict):
+        entries = [(str(key), value) for key, value in buckets.items() if isinstance(value, dict)]
+        if entries:
+            return sorted(entries, key=lambda entry: entry[0] != 'codex')  # General limits lead.
+    legacy = result.get('rateLimits')
+    return [('codex', legacy)] if isinstance(legacy, dict) else []
+
+
+def codex_limits(buckets):
+    limits = []
+    for limit_id, bucket in buckets:
+        general = limit_id == 'codex' or (len(buckets) == 1 and not bucket.get('limitName'))
+        name = str(bucket.get('limitName') or limit_id).strip()
+        for window in (bucket.get('primary'), bucket.get('secondary')):
+            entry = codex_window(window)
+            if not entry:
+                continue
+            minutes = entry.pop('minutes')
+            if not general:  # A model's own allowance, named the way Codex names it.
+                span = 'Monthly' if minutes >= 28 * 1440 else 'Weekly' if minutes >= 1440 else 'Session' if minutes else ''
+                entry['label'] = entry['title'] = '%s %s' % (name, span) if span else name
+                entry['scoped'] = True
+            limits.append(entry)
+    return limits
+
+
+def probe_codex(binary, directory):
+    """Ask the Codex app-server for rate limits.  Returns {'ok', 'limits', 'plan'} or a failure."""
+    environment = dict(os.environ, CODEX_HOME=str(directory))
+    try:
+        errors = tempfile.TemporaryFile('w+', errors='replace')
+    except OSError:
+        errors = None
+    try:
+        process = subprocess.Popen([binary, '-s', 'read-only', '-a', 'on-request', 'app-server'],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors or subprocess.DEVNULL,
+                                   text=True, env=environment)
+    except OSError as error:
+        return {'ok': False, 'kind': 'other', 'help': "Couldn't start Codex: %s" % str(error)[:200]}
+    try:
+        rpc_request(process, 1, 'initialize', {'clientInfo': {'name': 'juarchy-agent-usage', 'version': '1'}})
+        rpc_send(process, {'method': 'initialized', 'params': {}})
+        reply = rpc_request(process, 2, 'account/rateLimits/read')
+        error = reply.get('error')
+        if isinstance(error, dict):
+            message = str(error.get('message') or '')
+            if 'auth' in message.lower():
+                return {'ok': False, 'kind': 'refused', 'help': 'Codex is not signed in. Run `codex login` to see your limits.'}
+            return {'ok': False, 'kind': 'other', 'help': message[:200] or 'Codex could not read its limits.'}
+        result = obj(reply.get('result'))
+        buckets = codex_buckets(result)
+        if not buckets:
+            return {'ok': False, 'kind': 'other', 'help': "Codex's app-server answered without its rate limits."}
+        plan = next((bucket.get('planType') for _, bucket in buckets if bucket.get('planType')), '')
+        return {'ok': True, 'limits': codex_limits(buckets), 'plan': CODEX_PLANS.get(plan, str(plan).replace('_', ' '))}
+    except (TimeoutError, RuntimeError) as error:
+        # No answer usually means the network is not up yet: ask again soon.
+        return {'ok': False, 'kind': 'transport', 'help': ('%s. Retrying shortly.' % error)[:240]}
+    finally:
+        for stream in (process.stdin, process.stdout):
+            try:
+                stream.close()
+            except OSError:
+                pass
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        if errors:
+            errors.close()
+
+
+def parse_codex_rollout(path):
+    """Turns (tokens by model and day) and typed prompts from one rollout file.
+
+    Only the built-in OpenAI provider counts; a rollout aimed at another
+    backend (--oss, a gateway) belongs to that service.
+    """
+    turns, prompts = [], []
+    model, session, started, seen_records = 'codex', str(path), False, False
+    previous_total = None
+    seen_responses = set()
+    pending = []
+    for entry in jsonl(path):
+        kind = entry.get('type')
+        payload = obj(entry.get('payload'))
+        if kind == 'session_meta' and not started:
+            started = True
+            provider = str(payload.get('model_provider') or '').strip().lower()
+            if provider not in ('', 'openai'):
+                return {'turns': [], 'prompts': [], 'session': session}
+            session = str(payload.get('id') or session)
+            continue
+        if kind == 'turn_context':
+            model = str(payload.get('model') or payload.get('model_slug') or model)
+            continue
+        if kind == 'event_msg' and payload.get('type') == 'user_message' and payload.get('kind') in (None, 'plain'):
+            day = local_day(entry.get('timestamp'))
+            if day:
+                pending.append(day)
+            continue
+        if kind == 'token_usage_record':
+            seen_records = True
+            thread = obj(payload.get('thread_token_usage'))
+            marker = (str(payload.get('response_id') or ''), tuple(sorted((k, tokens(v)) for k, v in thread.items())))
+            if marker in seen_responses:
+                continue
+            seen_responses.add(marker)
+            usage, total = obj(payload.get('usage')), None
+        else:
+            inner = payload if payload.get('type') == 'token_count' else obj(payload.get('payload'))
+            if inner.get('type') != 'token_count' or seen_records:
+                continue
+            info = obj(inner.get('info'))
+            usage, total = obj(info.get('last_token_usage')), info.get('total_token_usage')
+        cache_read, cache_write = tokens(usage.get('cached_input_tokens')), tokens(usage.get('cache_write_input_tokens'))
+        counts = [max(0, tokens(usage.get('input_tokens')) - cache_read - cache_write), tokens(usage.get('output_tokens')),
+                  cache_read, cache_write]
+        if not sum(counts):
+            continue
+        if isinstance(total, dict) and total:  # A quota update can repeat the last request's usage.
+            if total == previous_total:
+                continue
+            previous_total = total
+        day = local_day(entry.get('timestamp'))
+        if not day:
+            continue
+        turns.append([model, day, sum(counts)])
+        for prompt_day in pending:  # A prompt may take many requests; it counts once.
+            prompts.append(prompt_day)
+        pending = []
+    return {'turns': turns, 'prompts': prompts, 'session': session}
+
+
+def codex_stats(directory, today=None):
+    index = FileIndex('codex', 1)
+    files = recent_files(directory / 'sessions', '**/rollout-*.jsonl') + recent_files(directory / 'archived_sessions', 'rollout-*.jsonl')
+    parsed = index.entries(files, parse_codex_rollout)
+    index.save()
+    stats = Stats(today)
+    for entry in parsed:
+        for model, day, total in entry['turns']:
+            stats.add(day, entry['session'], model, total)
+        for day in entry['prompts']:
+            stats.add_prompt(day, entry['session'])
+    return stats.snapshot(label=lambda model: model)
+
+
+def collect_codex(force=False, limits=True):
+    directory = codex_home()
+    record = base_record('codex', 'Codex')
+    binary = find_codex()
+    record['installed'] = bool(binary) or directory.is_dir()
+    record['stats'] = codex_stats(directory)
+    method, key = codex_login(directory)
+    record['ready'] = bool(method) or record['stats']['hasLocal']
+    if not method:
+        if record['ready']:
+            record['usageStatusText'] = 'Waiting for auth'
+            record['authHelpText'] = 'Sign in with `codex login` to see your limits.'
+        return record
+    if method == 'apikey':  # An API key bills by the token and has no plan limits.
+        record['tierLabel'] = 'API key'
+        return record
+    cache = LimitsCache('codex', key)
+    fallback = settle(cache.limits)
+    record['tierLabel'] = str(cache.data.get('plan') or '')
+    record['limits'], record['limitsFetchedAt'] = fallback, cache.fetched
+    record['limitsStale'] = bool(fallback)
+    if not limits:
+        record['usageStatusText'], record['authHelpText'] = 'Limits off', 'Turn limit checks on in Settings → Services → Agent usage.'
+        record['limits'], record['limitsStale'] = [], False
+        return record
+    if not binary:
+        record['usageStatusText'] = 'Codex limits unavailable'
+        record['authHelpText'] = "The codex command was not found. Install the Codex CLI to see your limits."
+        return record
+    if not cache.due(force):
+        record['limitsStale'] = False
+        return record
+    probe = probe_codex(binary, directory)
+    if probe['ok']:
+        record['limitsFetchedAt'] = cache.succeeded(probe['limits'], plan=probe['plan'])
+        record['limits'], record['limitsStale'], record['tierLabel'] = probe['limits'], False, probe['plan']
+        return record
+    cache.failed(probe['kind'])
+    record['retryAdvised'] = probe['kind'] == 'transport'
+    record['authHelpText'] = probe['help']
+    if not fallback:
+        record['usageStatusText'] = 'Codex limits unavailable'
+    if probe['kind'] == 'refused':
+        record['usageStatusText'] = 'Sign-in expired' if fallback else 'Waiting for auth'
+    return record
+
+
+# ------------------------------------------------------------------ main
+
+COLLECTORS = {'claude': collect_claude, 'codex': collect_codex}
+
+
+def collect(agents, force=False, limits=True):
+    def one(agent):
+        try:
+            return COLLECTORS[agent](force=force, limits=limits)
+        except Exception as error:  # One agent failing must not hide the other.
+            record = base_record(agent, {'claude': 'Claude Code', 'codex': 'Codex'}[agent])
+            record['usageStatusText'] = '%s unavailable' % record['name']
+            record['authHelpText'] = '%s: %s' % (type(error).__name__, str(error)[:200])
+            return record
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(agents)) as pool:
+        records = list(pool.map(one, agents))
+    for record in records:
+        try:
+            write_json(state_dir() / ('%s.json' % record['id']), record)
+        except OSError:
+            pass
+    return {'schemaVersion': SCHEMA_VERSION, 'updatedAt': iso(dt.datetime.now(dt.timezone.utc)), 'agents': records}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--agent', action='append', choices=sorted(COLLECTORS), help='only this agent (repeatable)')
+    parser.add_argument('--force', action='store_true', help='check limits now instead of reusing a recent answer')
+    parser.add_argument('--no-limits', action='store_true', help='skip limit checks; local counts only')
+    args = parser.parse_args(argv)
+    limits = not args.no_limits and privacy_allows_limits()
+    json.dump(collect(args.agent or sorted(COLLECTORS), args.force, limits), sys.stdout)
+    sys.stdout.write('\n')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

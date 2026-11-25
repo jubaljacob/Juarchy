@@ -140,7 +140,7 @@ def execute(entry):
         path = Path(entry["path"]).expanduser()
         if not path.is_dir():
             raise ValueError(f"Folder does not exist: {path}")
-        command = ["thunar", str(path)]
+        command = ["nautilus", "--new-window", str(path)]
     elif "packages" in entry:
         install = entry["packages"] == "install"
         prompt = "Package names > " if install else "Search packages > "

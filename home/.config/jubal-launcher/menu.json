@@ -291,7 +291,8 @@
     {
       "label": "Snaps",
       "command": [
-        "thunar",
+        "nautilus",
+        "--new-window",
         "admin:///.snapshots"
       ],
       "shortcut": "Super + Ctrl + Alt + N"
@@ -406,14 +407,6 @@
         {
           "label": "Mounted drives",
           "path": "/mnt"
-        },
-        {
-          "label": "Lock screen",
-          "command": [
-            "~/.local/bin/juarchy-shell",
-            "lock",
-            "lock"
-          ]
         }
       ],
       "shortcut": "Super + Ctrl + Alt + Y"

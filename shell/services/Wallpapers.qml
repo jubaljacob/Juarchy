@@ -29,13 +29,25 @@ Searcher {
         return category;
     }
 
+    // An Omarchy theme owns the palette, so a new image must not recolour the desktop.
+    readonly property bool omarchyTheme: Colours.flavour === "omarchy"
+
     function setRandom(): void {
+        if (omarchyTheme) {
+            const walls = root.list;
+            if (walls.length > 0)
+                setWallpaper(walls[Math.floor(Math.random() * walls.length)].path);
+            return;
+        }
         Quickshell.execDetached(["caelestia", "wallpaper", "-r", ...smartArg]);
     }
 
     function setWallpaper(path: string): void {
         actualCurrent = path;
-        Quickshell.execDetached(["caelestia", "wallpaper", "-f", path, ...smartArg]);
+        if (omarchyTheme)
+            Quickshell.execDetached(["python3", `${Paths.home}/.local/bin/juarchy-theme`, "omarchy", "background", "set", path]);
+        else
+            Quickshell.execDetached(["caelestia", "wallpaper", "-f", path, ...smartArg]);
     }
 
     function preview(path: string): void {

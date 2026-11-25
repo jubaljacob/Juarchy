@@ -42,14 +42,14 @@ def start(config):
     deadline = time.monotonic() + 15
     while True:
         try:
-            locked = run('qs', '-c', config, 'ipc', 'call', 'lock', 'isLocked')
             if config == 'juarchy':
                 if run('qs', '-c', config, 'ipc', 'call', 'juarchy', 'ready') != 'true':
                     raise RuntimeError('Juarchy is not ready')
                 targets = run('qs', '-c', config, 'ipc', 'show')
                 if not all(target in targets for target in ('jubalMenu', 'brightness', 'nexus', 'picker')):
                     raise RuntimeError('Required desktop controls are missing')
-            if locked not in ('true', 'false'):
+            elif run('qs', '-c', config, 'ipc', 'call', 'lock', 'isLocked') not in ('true', 'false'):
+                # Only the stock shell has a lock screen; Juarchy deliberately has none.
                 raise RuntimeError('Invalid lock status')
             return
         except (RuntimeError, subprocess.SubprocessError):
@@ -60,8 +60,9 @@ def start(config):
 
 def transform(name, text):
     if name.endswith('hyprland.lua'):
-        for old, new in (('caelestia shell lock lock', '~/.local/bin/juarchy-shell lock lock'),
-                         ('caelestia shell nexus open', '~/.local/bin/juarchy-shell nexus open'),
+        # Juarchy has no lock screen, so the stock lock shortcut is dropped rather than rerouted.
+        text = ''.join(line for line in text.splitlines(keepends=True) if 'caelestia shell lock lock' not in line)
+        for old, new in (('caelestia shell nexus open', '~/.local/bin/juarchy-shell nexus open'),
                          ('caelestia shell -d', '~/.local/bin/juarchy-shell start')):
             if old not in text:
                 raise ValueError('Expected startup or shortcut missing: ' + old)
@@ -95,6 +96,8 @@ def transform(name, text):
     if name.endswith('menu.json'):
         menu = json.loads(text)
         def visit(node):
+            node['items'] = [item for item in node['items']
+                             if item.get('command') != ['caelestia', 'shell', 'lock', 'lock']]
             for item in node['items']:
                 if 'items' in item:
                     visit(item)
@@ -177,7 +180,7 @@ def activate(home):
     marker = home / '.local/state/juarchy/activation.json'
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(json.dumps({'backup': str(backup)}, indent=2) + '\n')
-    print('Juarchy is active. Startup, launcher, lock, screenshots and brightness use the Juarchy shell.')
+    print('Juarchy is active. Startup, launcher, screenshots and brightness use the Juarchy shell.')
 
 
 def main():
@@ -194,8 +197,6 @@ def main():
             return
         marker = home / '.local/state/juarchy/activation.json'
         backup = Path(json.loads(marker.read_text())['backup'])
-        if run('qs', '-c', 'juarchy', 'ipc', 'call', 'lock', 'isLocked') != 'false':
-            raise RuntimeError('Unlock Juarchy before rollback')
         stop('juarchy')
         recovery = restore(backup, home)
         start('caelestia')

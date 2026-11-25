@@ -49,7 +49,7 @@ class PrivacyHistoryTests(unittest.TestCase):
     def test_defaults_and_runtime_privacy_logic(self):
         defaults = json.loads((ROOT / 'examples/privacy.json').read_text())
         self.assertEqual(defaults, {'remoteMediaArtwork': False, 'musicVisualisers': False,
-                                    'notificationRetentionDays': 0})
+                                    'notificationRetentionDays': 0, 'agentUsageLimits': False})
         if not shutil.which('node'):
             self.skipTest('Node is required to exercise QML JavaScript functions')
         result = subprocess.run(['node', str(ROOT / 'tests/privacy_runtime.cjs')],

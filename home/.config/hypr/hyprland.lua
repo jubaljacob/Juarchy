@@ -37,7 +37,7 @@ hl.monitor({
 
 -- Set programs that you use
 local terminal = "foot"
-local fileManager = "dolphin"
+local fileManager = "nautilus"
 local menu        = "hyprlauncher"
 
 
@@ -274,13 +274,12 @@ app("SUPER + RETURN", "Terminal", "foot")
 app("SUPER + SHIFT + RETURN", "Browser", "chromium --ozone-platform=wayland")
 app("SUPER + SHIFT + B", "Browser", "chromium --ozone-platform=wayland")
 app("SUPER + SHIFT + ALT + B", "Private browser", "chromium --ozone-platform=wayland --incognito")
-app("SUPER + SHIFT + F", "File manager", "thunar")
+app("SUPER + SHIFT + F", "File manager", "nautilus --new-window")
 app("SUPER + SHIFT + N", "Editor", "foot -e nvim")
 app("SUPER + ALT + RETURN", "Tmux", "foot -e tmux")
 app("SUPER + SHIFT + SLASH", "Passwords", "1password")
 o.bind("SUPER + SPACE", "Spotlight search", hl.dsp.global("juarchy:spotlight"))
 o.bind("SUPER + ALT + SPACE", "Desktop menu", hl.dsp.global("juarchy:menu"))
-app("SUPER + L", "Lock screen", "~/.local/bin/juarchy-shell lock lock")
 o.bind("PRINT", "Screenshot: select region", hl.dsp.exec_cmd('"$HOME/.local/bin/juarchy-screenshot"'), { release = true })
 o.bind("SHIFT + PRINT", "Screenshot: full screen", hl.dsp.exec_cmd('"$HOME/.local/bin/juarchy-screenshot" --full'), { release = true })
 -- Direct launcher sections and desktop tools
@@ -298,6 +297,8 @@ app("SUPER + CTRL + ALT + Y", "Menu: System", "\"$HOME/.local/bin/jubal-launcher
 app("SUPER + CTRL + ALT + W", "Web app manager", "\"$HOME/.local/bin/jubal-desktop-tools\" webapps")
 
 app("SUPER + SHIFT + W", "Wallpaper and appearance settings", "~/.local/bin/juarchy-shell nexus open")
+app("SUPER + CTRL + SPACE", "Next theme background", "\"$HOME/.local/bin/juarchy-theme\" omarchy background next --notify")
+app("SUPER + SHIFT + CTRL + SPACE", "Next Omarchy theme", "\"$HOME/.local/bin/juarchy-theme\" omarchy next --notify")
 app("SUPER + CTRL + A", "Audio", "pavucontrol")
 app("SUPER + CTRL + B", "Bluetooth", "blueman-manager")
 app("SUPER + CTRL + D", "Displays", "nwg-displays")

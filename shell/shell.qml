@@ -7,7 +7,6 @@ import "modules"
 import "modules/drawers"
 import "modules/background"
 import "modules/areapicker"
-import "modules/lock"
 import "modules/spotlight"
 import QtQuick
 import Quickshell
@@ -57,13 +56,8 @@ ShellRoot {
     Drawers {}
     Spotlight {}
     AreaPicker {}
-    Lock {
-        id: lock
-    }
 
     Shortcuts {}
     BatteryMonitor {}
-    IdleMonitors {
-        lock: lock
-    }
+    IdleMonitors {}
 }

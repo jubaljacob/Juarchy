@@ -1,5 +1,6 @@
 {
   "remoteMediaArtwork": false,
   "musicVisualisers": false,
-  "notificationRetentionDays": 0
+  "notificationRetentionDays": 0,
+  "agentUsageLimits": false
 }

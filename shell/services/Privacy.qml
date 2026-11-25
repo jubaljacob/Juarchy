@@ -10,6 +10,7 @@ Singleton {
     property bool remoteMediaArtwork: false
     property bool musicVisualisers: false
     property int notificationRetentionDays: 0
+    property bool agentUsageLimits: false
     property bool loaded: false
     property bool applying: false
 
@@ -19,10 +20,12 @@ Singleton {
             const data = JSON.parse(settings.text() || "{}");
             remoteMediaArtwork = data.remoteMediaArtwork === true;
             musicVisualisers = data.musicVisualisers === true;
+            agentUsageLimits = data.agentUsageLimits === true;
             notificationRetentionDays = [0, 1, 7, 30].includes(data.notificationRetentionDays) ? data.notificationRetentionDays : 0;
         } catch (error) {
             remoteMediaArtwork = false;
             musicVisualisers = false;
+            agentUsageLimits = false;
             notificationRetentionDays = 0;
             console.warn("Privacy settings could not be read; using private defaults");
         }
@@ -32,12 +35,13 @@ Singleton {
 
     function save(): void {
         if (!loaded || applying) return;
-        settings.setText(JSON.stringify({remoteMediaArtwork, musicVisualisers, notificationRetentionDays}, null, 2));
+        settings.setText(JSON.stringify({remoteMediaArtwork, musicVisualisers, notificationRetentionDays, agentUsageLimits}, null, 2));
     }
 
     onRemoteMediaArtworkChanged: save()
     onMusicVisualisersChanged: save()
     onNotificationRetentionDaysChanged: save()
+    onAgentUsageLimitsChanged: save()
     Component.onCompleted: loadSettings()
 
     FileView {

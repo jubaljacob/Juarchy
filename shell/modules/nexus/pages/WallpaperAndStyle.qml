@@ -172,6 +172,10 @@ PageBase {
             }
         }
 
+        OmarchyThemePicker {
+            Layout.fillWidth: true
+        }
+
         ThemePresets {
             Layout.fillWidth: true
         }
@@ -198,7 +202,9 @@ PageBase {
 
             last: true
             text: Tr.tr("Dark theme")
+            subtext: Colours.flavour === "omarchy" ? Tr.tr("Set by the Omarchy theme") : ""
             checked: !Colours.light
+            disabled: Colours.flavour === "omarchy"
             onToggled: Colours.setMode(checked ? "dark" : "light")
         }
     }

@@ -19,6 +19,9 @@ Singleton {
     }
     readonly property list<Monitor> monitors: variants.instances // qmllint disable incompatible-type
     property bool appleDisplayPresent: false
+    // Prefer Intel's panel (an NVIDIA backlight can be listed first), otherwise use
+    // whichever backlight the kernel exposes, e.g. amdgpu_bl1 on AMD laptops.
+    readonly property string selectBacklight: "dev=intel_backlight; [ -d /sys/class/backlight/$dev ] || dev=$(ls /sys/class/backlight | head -n 1);"
 
     function getMonitorForScreen(screen: ShellScreen): var {
         return monitors.find(m => m.modelData === screen); // qmllint disable missing-property
@@ -231,7 +234,7 @@ Singleton {
             else if (isDdc)
                 setProc.command = ["ddcutil", "-b", busNum, "setvcp", "10", rounded];
             else if (isInternal)
-                setProc.command = ["/usr/bin/brightnessctl", "-d", "intel_backlight", "s", `${rounded}%`];
+                setProc.command = ["sh", "-c", `${root.selectBacklight} exec /usr/bin/brightnessctl -d "$dev" s "$1"`, "sh", `${rounded}%`];
             else
                 return;
 
@@ -244,7 +247,7 @@ Singleton {
             else if (isDdc)
                 initProc.command = ["ddcutil", "-b", busNum, "getvcp", "10", "--brief"];
             else if (isInternal)
-                initProc.command = ["sh", "-c", "echo a b c $(/usr/bin/brightnessctl -d intel_backlight g) $(/usr/bin/brightnessctl -d intel_backlight m)"];
+                initProc.command = ["sh", "-c", `${root.selectBacklight} echo a b c $(/usr/bin/brightnessctl -d "$dev" g) $(/usr/bin/brightnessctl -d "$dev" m)`];
             else
                 return;
 

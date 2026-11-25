@@ -103,6 +103,19 @@ PageBase {
         }
 
         SectionHeader {
+            text: Tr.tr("Agent usage")
+        }
+
+        ToggleRow {
+            first: true
+            last: true
+            text: Tr.tr("Check Claude and Codex limits")
+            subtext: Tr.tr("Ask Anthropic and OpenAI for your plan limits, using the sign-ins Claude Code and Codex already keep. Token counts from this computer never need it.")
+            checked: Privacy.agentUsageLimits
+            onToggled: Privacy.agentUsageLimits = checked
+        }
+
+        SectionHeader {
             text: Tr.tr("Polling")
         }
 

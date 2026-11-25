@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Save and restore wallpaper/colour presets for Juarchy."""
+"""Save and restore wallpaper/colour presets for Juarchy.
+
+Omarchy themes have their own commands: juarchy-theme omarchy --help
+"""
 import argparse
 import copy
 import fcntl
@@ -8,6 +11,19 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+
+
+def omarchy_library():
+    """Make the Omarchy theme package importable from beside this script."""
+    lib = Path(__file__).resolve().parent.parent / 'lib'
+    if str(lib) not in sys.path:
+        sys.path.insert(0, str(lib))
+
+
+def omarchy_themes():
+    omarchy_library()
+    from juarchy_omarchy import themes
+    return themes
 
 
 def store_path():
@@ -64,6 +80,10 @@ def apply_preset(preset):
     # Validate the image and scheme before changing any desktop state.
     wall = validate_wallpaper(preset['wallpaper'])
     data = preset['scheme']
+    if data.get('flavour') == 'omarchy':
+        # Omarchy themes are rebuilt from their own palette files, not Caelestia's schemes.
+        omarchy_themes().apply_theme(data['name'], str(wall))
+        return
     if data['name'] not in schemes.get_scheme_names():
         raise ValueError('This colour scheme is no longer available')
     if data['flavour'] not in schemes.get_scheme_flavours(data['name']):
@@ -114,6 +134,10 @@ def main():
 
 
 if __name__ == '__main__':
+    if sys.argv[1:2] == ['omarchy']:
+        omarchy_library()
+        from juarchy_omarchy import cli
+        sys.exit(cli.main(sys.argv[2:]))
     try:
         main()
     except (OSError, ValueError, KeyError, ImportError) as error:

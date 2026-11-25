@@ -24,9 +24,14 @@ class ActivationTests(unittest.TestCase):
             # Reverse the new routing to construct an original desktop fixture.
             text = (ROOT / 'home' / name).read_text()
             if name.endswith('hyprland.lua'):
-                text = text.replace('~/.local/bin/juarchy-shell lock lock', 'caelestia shell lock lock')
+                # The stock desktop has a lock shortcut that Juarchy no longer carries.
+                text += 'app("SUPER + L", "Lock screen", "caelestia shell lock lock")\n'
                 text = text.replace('~/.local/bin/juarchy-shell nexus open', 'caelestia shell nexus open')
                 text = text.replace('~/.local/bin/juarchy-shell start', 'caelestia shell -d')
+            elif name.endswith('menu.json'):
+                menu = json.loads(text)
+                menu['items'].append({'label': 'Lock screen', 'command': ['caelestia', 'shell', 'lock', 'lock']})
+                text = json.dumps(menu, indent=2) + '\n'
             elif name.endswith('monitor-brightness'):
                 text = text.replace('"-c", "juarchy"', '"-c", "caelestia"')
                 text = text.replace('    response = run(*command).strip()\n',
@@ -85,6 +90,10 @@ class ActivationTests(unittest.TestCase):
         self.assertEqual(machine.read_text(), '-- personal monitors\n')
         self.assertIn('-- untouched personal additions', (self.home / '.config/hypr/hyprland.lua').read_text())
         self.assertIn('juarchy-shell start', (self.home / '.config/hypr/hyprland.lua').read_text())
+        self.assertNotIn('Lock screen', (self.home / '.config/hypr/hyprland.lua').read_text())
+        self.assertNotIn('shell lock', (self.home / '.config/hypr/hyprland.lua').read_text())
+        self.assertNotIn('Lock screen', (self.home / '.config/jubal-launcher/menu.json').read_text())
+        self.assertNotIn('"lock"', (self.home / '.config/jubal-launcher/menu.json').read_text())
         self.assertIn('}/caelestia', (self.home / '.config/quickshell/juarchy/utils/Paths.qml').read_text())
         self.assertTrue((self.home / '.local/state/juarchy/activation.json').exists())
 
@@ -97,10 +106,24 @@ class ActivationTests(unittest.TestCase):
                                           for i, command in enumerate(commands)]}
         migrated = json.loads(activation.transform('menu.json', json.dumps(menu)))
         actions = [item['command'] for item in migrated['items']]
-        self.assertEqual(actions[:3], [['~/.local/bin/juarchy-shell', 'lock', 'lock'],
-                                      ['~/.local/bin/juarchy-shell', 'nexus', 'open'],
-                                      ['~/.local/bin/juarchy-screenshot']])
-        self.assertEqual(actions[3:], [['~/.local/bin/juarchy-screenshot', '--full'], commands[4]])
+        # Juarchy has no lock screen, so the stock lock entry is dropped, not rerouted.
+        self.assertEqual(actions, [['~/.local/bin/juarchy-shell', 'nexus', 'open'],
+                                   ['~/.local/bin/juarchy-screenshot'],
+                                   ['~/.local/bin/juarchy-screenshot', '--full'], commands[4]])
+
+    def test_juarchy_start_never_asks_for_a_lock_screen(self):
+        calls = []
+
+        def fake_run(*command):
+            calls.append(command)
+            return {'ready': 'true', 'show': 'jubalMenu brightness nexus picker'}.get(command[-1], '')
+
+        with patch.object(activation, 'run', side_effect=fake_run):
+            activation.start('juarchy')
+        self.assertFalse(any('lock' in command for command in calls))
+        # The stock shell still has one, and its answer is still checked.
+        with patch.object(activation, 'run', side_effect=lambda *c: 'false' if c[-1] == 'isLocked' else ''):
+            activation.start('caelestia')
 
 
 if __name__ == '__main__':

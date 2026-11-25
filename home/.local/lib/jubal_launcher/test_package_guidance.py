@@ -55,6 +55,70 @@ class GuidanceTests(unittest.TestCase):
             self.assertFalse(guidance.guidance("aur/" + name, {})[2])
         self.assertEqual(guidance.variant("unverified-app-bin", "aur"), "Release")
 
+    def test_zen_only_the_stable_binary_is_recommended(self):
+        metadata = {n: {"Maintainer": "tester", "OutOfDate": None}
+                    for n in ("zen-browser-bin", "zen-browser", "zen-browser-git", "zen-browser-twilight-bin")}
+        self.assertTrue(guidance.guidance("aur/zen-browser-bin", {}, metadata, True)[2])
+        self.assertFalse(guidance.guidance("aur/zen-browser-bin", {}, metadata, False)[2])
+        for name in ("zen-browser", "zen-browser-git", "zen-browser-twilight-bin", "zen-browser-ublock-origin"):
+            with self.subTest(name=name):
+                self.assertFalse(guidance.guidance("aur/" + name, {}, metadata, True)[2])
+        self.assertEqual(guidance.suggested_arch_rows({"code": "extra/code"}, ["zen-browser-bin"]), [])
+        rows = guidance.decorate(["aur/zen-browser-git", "aur/zen-browser-twilight-bin", "aur/zen-browser-bin"], {}, None, metadata, True)
+        self.assertEqual(rows[0].split()[0], "aur/zen-browser-bin")
+        self.assertIn("[Recommended]", rows[0])
+        self.assertTrue(all("[Recommended]" not in row for row in rows[1:]))
+
+    def test_every_curated_aur_choice_resolves_to_itself_as_stable(self):
+        names = [f["aur"] for f in guidance.FAMILIES if f.get("aur")]
+        self.assertEqual(len(names), len(set(names)))
+        for family in guidance.FAMILIES:
+            if family.get("aur"):
+                with self.subTest(app=family["app"]):
+                    self.assertIs(guidance.family_for(family["aur"]), family)
+                    self.assertEqual(guidance.variant(family["aur"], "aur"), "Stable")
+                    record = {family["aur"]: {"Maintainer": "tester", "OutOfDate": None}}
+                    self.assertTrue(guidance.guidance("aur/" + family["aur"], {}, record, True)[2])
+
+    def test_curated_vendor_variants_are_never_recommended(self):
+        metadata = {}
+        for name in ("brave-beta-bin", "brave-nightly-bin", "brave-git", "microsoft-edge-beta-bin",
+                     "microsoft-edge-dev-bin", "android-studio-canary", "1password-beta", "teamviewer-beta",
+                     "tor-browser-alpha-bin", "mullvad-vpn-beta-bin", "sublime-text-dev", "zoom-git"):
+            with self.subTest(name=name):
+                self.assertIsNotNone(guidance.family_for(name))
+                self.assertIn(guidance.variant(name, "aur"), ("Development", "Preview"))
+                self.assertFalse(guidance.guidance("aur/" + name, {}, metadata, True)[2])
+        for name in ("slack-desktop-wayland", "zoom-firejail", "cursor-theme", "dropbox-cli", "brave-nightly"):
+            with self.subTest(name=name):
+                self.assertFalse(guidance.guidance("aur/" + name, {}, {}, True)[2])
+
+    def test_arch_build_is_recommended_when_the_aur_offers_variants_of_it(self):
+        choices = guidance.repo_choices(["extra/htop 3.4", "extra/nano 8.0", "extra-testing/foo 2", "extra/foo 1"])
+        rows = ["extra/htop 3.4", "extra/nano 8.0", "aur/htop-git", "aur/htop-bin", "aur/htop-vim", "extra/foo 1", "aur/foo-nightly"]
+        decorated = guidance.decorate(rows, choices)
+        by_target = {row.split()[0]: row for row in decorated}
+        self.assertIn("[Recommended]", by_target["extra/htop"])
+        self.assertIn("[Recommended]", by_target["extra/foo"])
+        for target in ("extra/nano", "aur/htop-git", "aur/htop-bin", "aur/htop-vim", "aur/foo-nightly"):
+            self.assertNotIn("[Recommended]", by_target[target])
+        self.assertEqual({r.split()[0] for r in decorated[:2]}, {"extra/htop", "extra/foo"})
+        for target in ("aur/htop-git", "aur/htop-bin"):
+            self.assertEqual(guidance.guidance(target, choices, None, False, guidance.contested_bases(["htop-git"]))[1],
+                             "Use extra/htop for the stable Arch version.")
+        # Without AUR variants to confuse it with, an ordinary package carries no badge.
+        self.assertFalse(guidance.guidance("extra/htop", choices)[2])
+        self.assertTrue(guidance.guidance("extra/htop", choices, None, False, frozenset({"htop"}))[2])
+        self.assertEqual(guidance.base_name("visual-studio-code-insiders-bin"), "visual-studio-code")
+        self.assertEqual(guidance.base_name("bin"), "bin")
+
+    def test_curated_picks_rank_ahead_of_derived_arch_picks(self):
+        metadata = {"brave-bin": {"Maintainer": "tester", "OutOfDate": None}}
+        rows = ["extra/htop 3.4", "aur/htop-git", "aur/brave-git", "aur/brave-bin"]
+        decorated = guidance.decorate(rows, {"htop": "extra/htop"}, None, metadata, True)
+        self.assertEqual([r.split()[0] for r in decorated],
+                         ["aur/brave-bin", "extra/htop", "aur/brave-git", "aur/htop-git"])
+
     def test_alias_search_and_recommendation_order_with_real_fzf(self):
         rows = guidance.decorate(["aur/visual-studio-code-insiders-bin", "aur/visual-studio-code-bin", "extra/code 1.0"], {"code": "extra/code"})
         result = subprocess.run(["fzf", "--delimiter=\t", "--nth=1,3", "--exact", "--no-sort", "--filter=vscode"],
