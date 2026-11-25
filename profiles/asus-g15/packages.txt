@@ -8,7 +8,7 @@ linux-headers
 linux-lts
 linux-lts-headers
 
-# Firmware
+# Firmware (sof-firmware is standard on AMD laptops; audio itself runs on snd_hda_intel)
 linux-firmware
 sof-firmware
 
@@ -17,7 +17,7 @@ mesa
 vulkan-radeon
 libva
 
-# NVIDIA RTX 3060 Mobile (discrete GPU, drives the HDMI/USB-C ports)
+# NVIDIA RTX 3060 Mobile (discrete GPU, drives the HDMI port and DP-9)
 nvidia-open-dkms
 nvidia-utils
 vulkan-icd-loader

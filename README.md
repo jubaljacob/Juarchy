@@ -180,10 +180,10 @@ or as a starting point for another ASUS ROG laptop.
 | Part | Hardware | How it is handled |
 |---|---|---|
 | CPU / integrated GPU | AMD Ryzen 7 6800HS with Radeon 680M | `mesa`, `vulkan-radeon`, `libva`; drives the laptop panel |
-| Discrete GPU | NVIDIA GeForce RTX 3060 Mobile | `nvidia-open-dkms`, `nvidia-utils`, NVIDIA suspend/resume services |
+| Discrete GPU | NVIDIA GeForce RTX 3060 Mobile | `nvidia-open-dkms`, `nvidia-utils`, NVIDIA suspend/resume services; drives the HDMI port and `DP-9` (the external monitor) |
 | Panel | 2560×1440, 165 Hz (`eDP-1`) | 165 Hz on the charger, 60 Hz on battery (`power-mode`) |
 | ASUS controls | Power profiles, Fn keys, keyboard light, battery limit | `asusctl` / `asusd` with `/etc/asusd` from the profile |
-| Audio | AMD audio coprocessor | `sof-firmware` |
+| Audio | Realtek ALC285 (speakers, headphones, mic) | Kernel `snd_hda_intel` driver; nothing extra to install |
 | Mouse | Logitech MX Master 3S (Bluetooth) | `logiops` (thumb-button gestures) and `openlogi-bin` |
 
 ### What the profile contains
@@ -192,7 +192,7 @@ or as a starting point for another ASUS ROG laptop.
 
 | File | Installed to | Purpose |
 |---|---|---|
-| `home/.config/hypr/machine.lua` | `~/.config/hypr/machine.lua` (first install only) | Power-mode hooks, Fn+F5 notification, touchpad scroll speed (`scroll_factor = 0.3`), natural scrolling, 4-finger swipe (`workspace_swipe_distance = 500`), sliding workspace animation, Super+Tab stepping, hyprlock key bindings, Bluetooth agent, Hyprland logging |
+| `home/.config/hypr/machine.lua` | `~/.config/hypr/machine.lua` (first install only; loads `monitors.lua` only if it exists) | Power-mode hooks, Fn+F5 notification, touchpad scroll speed (`scroll_factor = 0.3`), natural scrolling, 4-finger swipe (`workspace_swipe_distance = 500`), sliding workspace animation, Super+Tab stepping, hyprlock key bindings, Bluetooth agent, Hyprland logging |
 | `home/.local/bin/power-mode` | `~/.local/bin/` | Silent / balanced / turbo presets and the 165/60 Hz refresh switch |
 | `home/.local/bin/asus-profile-sync` and `home/.config/systemd/user/asus-profile-sync.service` | `~/.local/bin/`, `~/.config/systemd/user/` | Applies the AC/battery profile at login and after resume (asusd only switches on plug/unplug) |
 | `home/.local/bin/juarchy-lock` and `home/.config/hypr/hyprlock.conf` | `~/.local/bin/`, `~/.config/hypr/` | The hyprlock lock screen, coloured from the current theme |
@@ -310,7 +310,7 @@ From a terminal:
 ```sh
 power-mode silent | balanced | turbo   # set a profile now
 power-mode auto                        # charger: turbo + 165 Hz, battery: silent + 60 Hz
-power-mode refresh 120                 # set the panel refresh rate by hand
+power-mode refresh 60                  # set the panel refresh rate by hand (165 or 60)
 power-mode status
 ```
 
@@ -318,7 +318,8 @@ power-mode status
 once with `asusctl battery oneshot`, or change the limit with
 `asusctl battery limit 90`.
 
-**Keyboard backlight.** `asusctl aura` changes mode and colour;
+**Keyboard backlight.** `asusctl aura effect static|breathe|rainbow-wave|…`
+changes the effect and colour (see `asusctl aura effect --help`);
 `asusctl leds set low|med|high|off` changes brightness.
 
 **Touchpad and swipe speed.** In `~/.config/hypr/machine.lua`:
