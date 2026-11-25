@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# power-mode: power presets for the ASUS Zephyrus G15 (silent / balanced / turbo)
+#
+#   power-mode silent|balanced|turbo   set that profile now (profile only)
+#   power-mode auto                    AC: turbo + 165 Hz   battery: silent + 60 Hz
+#   power-mode refresh [HZ]            set the panel refresh rate (default: by power source)
+#   power-mode status                  show power source, profile and refresh rate
+#   power-mode watch                   keep the refresh rate in step with the power source
+#                                      (started from ~/.config/hypr/machine.lua)
+#   power-mode notify                  show the current mode as a notification (Fn+F5)
+#
+# Profiles are owned by asusd (asusctl). It switches them on plug/unplug itself:
+# see platform_profile_on_ac / platform_profile_on_battery in /etc/asusd/asusd.ron.
+#   silent   = Quiet       (power-profiles-daemon: power-saver)
+#   balanced = Balanced    (power-profiles-daemon: balanced)
+#   turbo    = Performance (power-profiles-daemon: performance)
+# asusctl cannot change the screen refresh rate, so this script does that part.
+
+export LC_ALL=C
+
+AC_HZ=165
+BAT_HZ=60
+PS_DIR=${POWER_MODE_PS_DIR:-/sys/class/power_supply}
+POLL=${POWER_MODE_POLL:-30}
+
+# hyprctl needs the instance signature; recover it if we were not started by Hyprland.
+if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+    sig=$(ls -t "${XDG_RUNTIME_DIR:-/run/user/$UID}/hypr" 2>/dev/null | head -n1)
+    [[ -n $sig ]] && export HYPRLAND_INSTANCE_SIGNATURE=$sig
+fi
+
+ac_online() {
+    local f
+    for f in "$PS_DIR"/*/type; do
+        [[ $(<"$f") == Mains ]] || continue
+        [[ $(<"${f%type}online") == 1 ]] && return 0
+    done
+    return 1
+}
+
+set_profile() {
+    local p
+    case $1 in
+        silent)   p=Quiet ;;
+        balanced) p=Balanced ;;
+        turbo)    p=Performance ;;
+        *) echo "unknown profile: $1" >&2; return 1 ;;
+    esac
+    asusctl profile set "$p" >/dev/null
+}
+
+# Current profile as silent / balanced / turbo.
+get_profile() {
+    case $(asusctl profile get | sed -n 's/^Active profile: //p') in
+        Quiet)       echo silent ;;
+        Balanced)    echo balanced ;;
+        Performance) echo turbo ;;
+        *)           echo unknown ;;
+    esac
+}
+
+# Change only the refresh rate of the built-in panel; resolution, position and
+# scale are read from the live layout so nwg-displays changes are respected.
+set_refresh() {
+    local hz=$1 name res pos scale vrr
+    read -r name res pos scale vrr < <(hyprctl monitors -j | jq -r --argjson hz "$hz" '
+        [.[] | select(.name | startswith("eDP"))] | first // empty
+        | select(((.refreshRate - $hz) | if . < 0 then -. else . end) > 1)
+        | "\(.name) \(.width)x\(.height) \(.x)x\(.y) \(.scale) \(if .vrr then 1 else 0 end)"')
+    [[ -z $name ]] && return 0   # no panel, or already at the target rate
+    hyprctl eval "hl.monitor({ output = \"$name\", mode = \"$res@$hz\", position = \"$pos\", scale = $(printf '%.2f' "$scale"), vrr = $vrr })" >/dev/null
+}
+
+refresh_for_source() {
+    if ac_online; then set_refresh "$AC_HZ"; else set_refresh "$BAT_HZ"; fi
+}
+
+apply_auto() {
+    if ac_online; then set_profile turbo; else set_profile silent; fi
+    refresh_for_source
+}
+
+notify_profile() {
+    sleep 0.4   # Fn+F5 changes the profile on the same key press; let it settle first
+    local p
+    p=$(get_profile)
+    notify-send -a power-mode -t 1500 -h string:x-canonical-private-synchronous:power-mode "Power mode" "${p^}"
+}
+
+status() {
+    echo "power source : $(ac_online && echo 'AC (plugged in)' || echo 'battery')"
+    echo "profile      : $(get_profile)  (firmware: $(< /sys/firmware/acpi/platform_profile), power-profiles-daemon: $(powerprofilesctl get))"
+    hyprctl monitors -j | jq -r '.[] | select(.name | startswith("eDP")) | "refresh rate : \(.refreshRate | floor) Hz"'
+}
+
+watch() {
+    exec 9>"${XDG_RUNTIME_DIR:-/tmp}/power-mode-watch.lock"
+    flock -n 9 || exit 0   # already running
+
+    local last="" state
+    # udev wakes us on plug/unplug; the timeout also catches changes made while suspended.
+    while :; do
+        if ac_online; then state=ac; else state=battery; fi
+        if [[ $state != "$last" ]]; then
+            refresh_for_source
+            if [[ -n $last ]]; then
+                sleep 2   # let asusd finish switching the profile before we report it
+                if [[ $state == ac ]]; then
+                    notify-send -a power-mode "Plugged in" "$(get_profile) mode, ${AC_HZ} Hz"
+                else
+                    notify-send -a power-mode "On battery" "$(get_profile) mode, ${BAT_HZ} Hz"
+                fi
+            fi
+            last=$state
+        fi
+        read -r -t "$POLL" _ || { (( $? > 128 )) || break; }
+    done < <(udevadm monitor --udev --subsystem-match=power_supply)
+}
+
+case ${1:-status} in
+    silent|balanced|turbo) set_profile "$1" ;;
+    auto)    apply_auto ;;
+    refresh) if [[ -n ${2:-} ]]; then set_refresh "$2"; else refresh_for_source; fi ;;
+    status)  status ;;
+    watch)   watch ;;
+    notify)  notify_profile ;;
+    *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

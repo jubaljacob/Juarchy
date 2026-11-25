@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Idle actions called by hypridle (~/.config/hypr/hypridle.conf).
+# Each idle timeout runs this with a step name; the script decides what to do
+# based on whether the charger is plugged in and whether the screen is locked.
+#
+#                   plugged in                     on battery
+#   2 min   (t120)  sleep if locked (e.g. Super+L)  sleep if locked (e.g. Super+L)
+#   5 min   (t300)  -                               lock + screen off
+#   7 min   (t420)  -                               sleep (2 min after the 5-min lock)
+#  10 min   (t600)  -                               sleep, locked or not (fallback)
+#  45 min  (t2700)  lock                            -
+#  47 min  (t2820)  sleep (2 min after the lock)    -
+#
+# Exception: on the charger with an external monitor connected, the "sleep if
+# locked" steps (t120/t420/t2820) turn the laptop panel off instead of sleeping.
+#
+# "Screen off" only ever switches the laptop panel (eDP-*). External monitors
+# are never turned off by DPMS: see screen() below.
+#
+# Sleep always locks first (hypridle before_sleep_cmd), so waking needs the password.
+
+set -u
+
+on_ac() {
+    local d
+    for d in /sys/class/power_supply/*; do
+        case "$(cat "$d/type" 2>/dev/null)" in
+            Mains|USB*) [ "$(cat "$d/online" 2>/dev/null)" = 1 ] && return 0 ;;
+        esac
+    done
+    return 1
+}
+
+locked() { pidof hyprlock >/dev/null; }
+# Any monitor other than the laptop panel (e.g. the ROG on the NVIDIA port).
+external_monitor() {
+    hyprctl monitors -j 2>/dev/null | jq -e 'any(.[]; .name | startswith("eDP") | not)' >/dev/null
+}
+# Sleep when locked, except docked on the charger: there the external monitor
+# on the NVIDIA GPU can drop out on wake-up and take Hyprland down (2 Nov 2026),
+# so just turn the laptop panel off instead. The listener's on-resume turns it on.
+locked_sleep() {
+    locked || return 0
+    if on_ac && external_monitor; then screen disable; else sleep_now; fi
+}
+lock() { loginctl lock-session; }
+sleep_now() { systemctl suspend; }
+# DPMS on the laptop panel(s) only. Switching the ROG on the NVIDIA port back on
+# after DPMS-off makes it drop out (nvidia "Failed to initialize G-SYNC"), and
+# Hyprland 0.57 crashes when a monitor disconnects under the lock screen,
+# taking hyprlock and everything else with it (4 Nov 2026). So never DPMS it.
+# Each panel is named explicitly: hl.dsp.dpms with no monitor, or one that
+# doesn't match, falls back to every screen.
+panels() {
+    hyprctl monitors -j 2>/dev/null | jq -r '.[] | select(.name | startswith("eDP")) | .name'
+}
+screen() {
+    local m
+    for m in $(panels); do
+        hyprctl dispatch "hl.dsp.dpms({ action = \"$1\", monitor = \"$m\" })" >/dev/null
+    done
+}
+
+case "${1:-}" in
+    # Locked for 2 idle minutes -> sleep, on charger or battery.
+    t120|t420|t2820) locked_sleep ;;
+    t300)
+        if ! on_ac; then
+            lock
+            sleep 1   # let the lockscreen draw before the screen goes dark
+            screen disable
+        fi
+        ;;
+    t600)  on_ac || sleep_now ;;
+    t2700) on_ac && lock ;;
+    resume) screen enable ;;
+    *) echo "usage: juarchy-idle t120|t300|t420|t600|t2700|t2820|resume" >&2; exit 2 ;;
+esac
+exit 0

@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -71,6 +72,16 @@ class InstallerTests(unittest.TestCase):
         machine = self.home / '.config/hypr/machine.lua'
         machine.write_text('-- customized here\n')
         installer.apply(installer.plan('intel-nvidia', self.home), self.home)
+        self.assertEqual(machine.read_text(), '-- customized here\n')
+
+    def test_asus_profile_seeds_machine_settings_once(self):
+        installer.apply(installer.plan('asus-g15', self.home), self.home)
+        machine = self.home / '.config/hypr/machine.lua'
+        self.assertIn('power-mode watch', machine.read_text())
+        self.assertTrue(os.access(self.home / '.local/bin/power-mode', os.X_OK))
+        self.assertTrue((self.home / '.config/hypr/hypridle.conf').exists())
+        machine.write_text('-- customized here\n')
+        installer.apply(installer.plan('asus-g15', self.home), self.home)
         self.assertEqual(machine.read_text(), '-- customized here\n')
 
     def test_install_preserves_original_caelestia_configuration(self):

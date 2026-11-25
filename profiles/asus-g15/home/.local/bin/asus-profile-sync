@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Apply the asusd AC/battery platform profile for the current power source.
+# asusd only switches on plug/unplug events, so this runs at login and on resume.
+# Usage: asus-profile-sync [--once]
+
+CONF=/etc/asusd/asusd.ron
+
+on_ac() {
+    local d
+    for d in /sys/class/power_supply/*; do
+        [[ $(<"$d/type") == Mains && $(<"$d/online") == 1 ]] && return 0
+    done
+    return 1
+}
+
+# conf_value KEY DEFAULT: read a bare enum value from asusd.ron
+conf_value() {
+    local v
+    v=$(sed -n "s/^ *$1: *\([A-Za-z]*\),.*/\1/p" "$CONF" 2>/dev/null)
+    echo "${v:-$2}"
+}
+
+sync_profile() {
+    local want current
+    if on_ac; then
+        want=$(conf_value platform_profile_on_ac Performance)
+    else
+        want=$(conf_value platform_profile_on_battery Quiet)
+    fi
+    current=$(asusctl profile get 2>/dev/null | sed -n 's/^Active profile: //p')
+    [[ $current == "$want" ]] || asusctl profile set "$want"
+}
+
+# asusd may not be up yet at login or right after resume
+sync_with_retry() {
+    local i
+    for i in {1..10}; do
+        sync_profile && return 0
+        sleep 2
+    done
+    return 1
+}
+
+sync_with_retry
+[[ $1 == --once ]] && exit
+
+# PrepareForSleep carries "true" going to sleep and "false" on resume
+dbus-monitor --system "type='signal',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'" |
+while read -r line; do
+    if [[ $line == "boolean false" ]]; then
+        sleep 2 # let the AC state settle after wake
+        sync_with_retry
+    fi
+done

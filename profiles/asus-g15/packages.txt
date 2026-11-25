@@ -1,0 +1,40 @@
+# Official Arch packages for the ASUS ROG Zephyrus G15 (GA503RM) profile.
+# Install with: sudo pacman -S --needed $(grep -v -e "^#" -e "^$" profiles/asus-g15/packages.txt)
+# or run profiles/asus-g15/setup-system.sh, which does this for you.
+
+# Kernels and headers (nvidia-open-dkms builds against every installed kernel)
+linux
+linux-headers
+linux-lts
+linux-lts-headers
+
+# Firmware
+linux-firmware
+sof-firmware
+
+# AMD Radeon 680M (integrated GPU, drives the laptop panel)
+mesa
+vulkan-radeon
+libva
+
+# NVIDIA RTX 3060 Mobile (discrete GPU, drives the HDMI/USB-C ports)
+nvidia-open-dkms
+nvidia-utils
+vulkan-icd-loader
+
+# ASUS control: power profiles, battery charge limit, keyboard backlight, Fn keys
+asusctl
+power-profiles-daemon
+
+# Lock screen and idle handling
+hyprlock
+hypridle
+jq
+ttf-cascadia-code-nerd
+adwaita-fonts
+
+# Screen recording (ships the NVIDIA suspend fix in /usr/lib/modprobe.d/gsr-nvidia.conf)
+gpu-screen-recorder
+
+# Bluetooth pairing agent (started from machine.lua)
+blueman

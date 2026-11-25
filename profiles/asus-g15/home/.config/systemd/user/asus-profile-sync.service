@@ -1,0 +1,10 @@
+[Unit]
+Description=Sync ASUS platform profile with AC/battery state at login and resume
+
+[Service]
+ExecStart=%h/.local/bin/asus-profile-sync
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

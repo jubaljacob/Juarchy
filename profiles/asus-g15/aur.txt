@@ -1,0 +1,4 @@
+# AUR packages for the ASUS ROG Zephyrus G15 profile (Logitech MX Master 3S).
+# Install with: yay -S --needed $(grep -v '^#' profiles/asus-g15/aur.txt)
+logiops
+openlogi-bin

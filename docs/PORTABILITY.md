@@ -44,6 +44,15 @@ no second tab; the bundled diagnostic now opens an animated sample tab and
 includes a camera test. The test results do not establish that Discord's
 encoding or remote video delivery works.
 
+## ASUS ROG Zephyrus G15 profile (`nived-setup` branch)
+
+`profiles/asus-g15/` holds Nived's laptop setup: power-mode and asusd profile
+scripts, the hyprlock/hypridle lock and idle setup, `machine.lua` tweaks,
+`/etc/asusd` and `/etc/logid.cfg`, and the driver package lists. The README
+section "Nived's setup" covers the full install. Its `setup-system.sh` is the
+only part of Juarchy that installs packages or writes to `/etc`, and it
+previews everything unless run with `--apply`.
+
 ## Excluded machine and account state
 
 The project excludes browser profiles, application sessions, credentials,

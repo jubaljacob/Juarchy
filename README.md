@@ -171,6 +171,183 @@ python scripts/install.py --profile intel-nvidia --apply
 
 See [portability and known issues](docs/PORTABILITY.md) before enabling it.
 
+## Nived's setup: ASUS ROG Zephyrus G15 (GA503RM)
+
+This branch (`nived-setup`) also carries the full setup of Nived's laptop as
+the `asus-g15` hardware profile. Use it to rebuild that machine from scratch,
+or as a starting point for another ASUS ROG laptop.
+
+| Part | Hardware | How it is handled |
+|---|---|---|
+| CPU / integrated GPU | AMD Ryzen 7 6800HS with Radeon 680M | `mesa`, `vulkan-radeon`, `libva`; drives the laptop panel |
+| Discrete GPU | NVIDIA GeForce RTX 3060 Mobile | `nvidia-open-dkms`, `nvidia-utils`, NVIDIA suspend/resume services |
+| Panel | 2560×1440, 165 Hz (`eDP-1`) | 165 Hz on the charger, 60 Hz on battery (`power-mode`) |
+| ASUS controls | Power profiles, Fn keys, keyboard light, battery limit | `asusctl` / `asusd` with `/etc/asusd` from the profile |
+| Audio | AMD audio coprocessor | `sof-firmware` |
+| Mouse | Logitech MX Master 3S (Bluetooth) | `logiops` (thumb-button gestures) and `openlogi-bin` |
+
+### What the profile contains
+
+`profiles/asus-g15/`:
+
+| File | Installed to | Purpose |
+|---|---|---|
+| `home/.config/hypr/machine.lua` | `~/.config/hypr/machine.lua` (first install only) | Power-mode hooks, Fn+F5 notification, touchpad scroll speed (`scroll_factor = 0.3`), natural scrolling, 4-finger swipe (`workspace_swipe_distance = 500`), sliding workspace animation, Super+Tab stepping, hyprlock key bindings, Bluetooth agent, Hyprland logging |
+| `home/.local/bin/power-mode` | `~/.local/bin/` | Silent / balanced / turbo presets and the 165/60 Hz refresh switch |
+| `home/.local/bin/asus-profile-sync` and `home/.config/systemd/user/asus-profile-sync.service` | `~/.local/bin/`, `~/.config/systemd/user/` | Applies the AC/battery profile at login and after resume (asusd only switches on plug/unplug) |
+| `home/.local/bin/juarchy-lock` and `home/.config/hypr/hyprlock.conf` | `~/.local/bin/`, `~/.config/hypr/` | The hyprlock lock screen, coloured from the current theme |
+| `home/.local/bin/juarchy-idle` and `home/.config/hypr/hypridle.conf` | `~/.local/bin/`, `~/.config/hypr/` | Lock, screen-off and sleep timings (table below) |
+| `home/.config/caelestia/shell.json` | `~/.config/caelestia/shell.json` | Bar layout and shell preferences, with the shell's own idle timeouts turned off so hypridle owns them |
+| `system/etc/asusd/asusd.ron` | `/etc/asusd/` | 80 % battery charge limit; Performance on AC, Quiet on battery |
+| `system/etc/asusd/aura_19b6.ron` | `/etc/asusd/` | Keyboard backlight: static red, medium brightness |
+| `system/etc/logid.cfg` | `/etc/` | MX Master 3S thumb button: hold and move left/right to switch workspace |
+| `packages.txt`, `aur.txt` | — | Drivers and tools this laptop needs on top of the shared desktop packages |
+| `setup-system.sh` | — | Installs those packages, copies the `/etc` files and enables the services |
+| `extras/monitors.lua` | copy by hand | The saved two-monitor layout (laptop panel plus a 1440p monitor on `DP-9`) |
+
+`~/.config/hypr/machine.lua` is only written when it does not exist yet, so
+later installs never overwrite your tweaks there. `shell.json` from the profile
+replaces the shared one in full.
+
+Do **not** use `--profile intel-nvidia` on this laptop; that profile holds
+workarounds for a different, Intel-based machine.
+
+### Fresh install, step by step
+
+1. **Install Arch Linux** with a working network connection, a user with
+   `sudo`, and `git`, `python` and `yay`. See [docs/INSTALL.md](docs/INSTALL.md)
+   for dual-booting with Windows.
+
+2. **Get this branch:**
+
+   ```sh
+   gh repo clone jubaljacob/Juarchy
+   cd Juarchy
+   git switch nived-setup
+   ```
+
+3. **Install the shared desktop packages** (Hyprland, Caelestia shell,
+   Quickshell, PipeWire and so on). Print the commands, run them, then check:
+
+   ```sh
+   python scripts/dependencies.py
+   python scripts/dependencies.py --check
+   ```
+
+4. **Install the desktop with the ASUS profile**, as your normal user. Preview
+   first, then apply:
+
+   ```sh
+   python scripts/install.py --profile asus-g15 --shared-only
+   python scripts/install.py --profile asus-g15 --shared-only --apply
+   ```
+
+5. **Install the drivers, ASUS and mouse tools, and system configs.** Preview
+   first, then apply (asks for your sudo password):
+
+   ```sh
+   profiles/asus-g15/setup-system.sh
+   profiles/asus-g15/setup-system.sh --apply
+   ```
+
+   This installs everything in `packages.txt` and `aur.txt`, copies
+   `system/etc/` into `/etc` (keeping a `.bak-<date>` copy of any file it
+   changes), and enables:
+   - system: `power-profiles-daemon`, `bluetooth`, `logid`,
+     `nvidia-suspend`, `nvidia-resume`, `nvidia-hibernate`
+   - user: `asus-profile-sync`, `hypridle`, `openlogi-agent`
+
+6. **Start Hyprland on login.** There is no login manager; Hyprland starts
+   when you log in on tty1. Add this to `~/.bash_profile`:
+
+   ```sh
+   # Start Hyprland automatically after login on tty1
+   if [[ -z $WAYLAND_DISPLAY && -z $DISPLAY && ${XDG_VTNR:-0} -eq 1 ]]; then
+       hypr_logs="$HOME/.local/state/hypr/logs"
+       mkdir -p "$hypr_logs"
+       ls -1t "$hypr_logs"/hyprland-*.log 2>/dev/null | tail -n +10 | xargs -r rm -f
+       start-hyprland -- --config "$HOME/.config/hypr/hyprland.lua" \
+           >>"$hypr_logs/hyprland-$(date +%F_%H-%M-%S).log" 2>&1
+   fi
+   ```
+
+   This keeps the ten newest Hyprland logs in `~/.local/state/hypr/logs`.
+
+7. **Reboot** so the NVIDIA modules load.
+
+8. **Set up monitors.** Press **Super + Ctrl + D** (nwg-displays) and save the
+   layout; it is written to `~/.config/hypr/monitors.lua`. To reuse the old
+   two-monitor layout instead:
+
+   ```sh
+   cp profiles/asus-g15/extras/monitors.lua ~/.config/hypr/monitors.lua
+   ```
+
+9. **Pair the MX Master 3S.** Open Bluetooth with **Super + Ctrl + B**, pair
+   the mouse, then open OpenLogi and set the **Gesture button** to **None**
+   so logid can use it for workspace switching.
+
+### Check that everything works
+
+```sh
+nvidia-smi                 # NVIDIA driver loaded, RTX 3060 listed
+asusctl profile get        # Active profile: Performance (charger) / Quiet (battery)
+asusctl battery info       # charge limit 80
+power-mode status          # power source, profile and refresh rate
+systemctl --user status asus-profile-sync hypridle openlogi-agent
+python scripts/doctor.py
+```
+
+Then try **Fn + F5** (a notification shows the new mode), **Super + L** (lock
+screen) and unplugging the charger (the panel drops to 60 Hz and switches to
+Quiet).
+
+### Daily use
+
+**Power modes.** Fn + F5 cycles Silent → Balanced → Turbo in the firmware.
+From a terminal:
+
+```sh
+power-mode silent | balanced | turbo   # set a profile now
+power-mode auto                        # charger: turbo + 165 Hz, battery: silent + 60 Hz
+power-mode refresh 120                 # set the panel refresh rate by hand
+power-mode status
+```
+
+**Battery charge limit.** Set to 80 % in `/etc/asusd/asusd.ron`. Charge to 100 %
+once with `asusctl battery oneshot`, or change the limit with
+`asusctl battery limit 90`.
+
+**Keyboard backlight.** `asusctl aura` changes mode and colour;
+`asusctl leds set low|med|high|off` changes brightness.
+
+**Touchpad and swipe speed.** In `~/.config/hypr/machine.lua`:
+- `scroll_factor = 0.3`: two-finger scroll speed. Lower is slower; 1.0 is
+  the unmodified Linux speed.
+- `workspace_swipe_distance = 500`: finger travel in pixels for one
+  workspace. Higher makes the 4-finger swipe slower (Hyprland default 300).
+
+Hyprland reloads the file as soon as you save it.
+
+**Lock, screen off and sleep** (`juarchy-idle`, driven by hypridle):
+
+| Idle time | On the charger | On battery |
+|---|---|---|
+| 2 min | Sleep if already locked | Sleep if already locked |
+| 5 min | — | Lock and turn the panel off |
+| 7 min | — | Sleep |
+| 10 min | — | Sleep, locked or not |
+| 45 min | Lock | — |
+| 47 min | Sleep | — |
+
+The laptop always locks before sleeping. On the charger with an external
+monitor connected, "sleep" turns only the laptop panel off: an external monitor
+on the NVIDIA port can drop out on wake-up and crash Hyprland. External
+monitors are never turned off by DPMS for the same reason.
+
+**Mouse.** Hold the MX Master 3S thumb button and move left or right to switch
+workspace (it sends Super + Tab and Super + Shift + Tab).
+
 ## Make it your own
 
 ### Screenshots
@@ -282,7 +459,7 @@ python ~/.local/bin/juarchy-agent-usage --agent claude --no-limits
 - `home/.config/hypr/hyprland.lua`: shared compositor settings and shortcuts.
 - `home/.config/jubal-launcher/menu.json`: shared menu entries.
 - `home/.local/bin/` and `home/.local/lib/`: custom helpers and package guidance.
-- `profiles/`: optional hardware settings.
+- `profiles/`: optional hardware settings (`asus-g15` is Nived's laptop; see above).
 - `local/home/`: ignored personal overrides, copied over shared files at install.
 
 Edit `~/.config/hypr/machine.lua` for a particular computer's monitors,
