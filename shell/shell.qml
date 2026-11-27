@@ -8,6 +8,7 @@ import "modules/drawers"
 import "modules/background"
 import "modules/areapicker"
 import "modules/spotlight"
+import "modules/screenshotpreview"
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -56,6 +57,7 @@ ShellRoot {
     Drawers {}
     Spotlight {}
     AreaPicker {}
+    ScreenshotPreview {}
 
     Shortcuts {}
     BatteryMonitor {}
